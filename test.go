@@ -4,6 +4,7 @@ import (
 	"container/list"
 	"fmt"
 	"io/ioutil"
+	"log"
 )
 
 func GetAllFile(pathname string) error {
@@ -28,7 +29,21 @@ func ListFiles() {
 	}
 }
 
+/*
+Name: readFileByte
+@ para: filePath string
+@ Return: string
+Func: read and then return the byte of content from file in corresponding path
+*/
+func readFileByte(filePath string) []byte {
+	data, err := ioutil.ReadFile(filePath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return data
+}
+
 func main() {
-	s := [512]byte{1, 2}
-	fmt.Print(s)
+	s := readFileByte("a.txt")
+	fmt.Print(len(s))
 }

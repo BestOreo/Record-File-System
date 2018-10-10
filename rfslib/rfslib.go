@@ -11,13 +11,12 @@ it.
 package rfslib
 
 import (
-	"bytes"
-	"encoding/gob"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"net"
 	"os"
+	"strconv"
 )
 
 // A Record is the unit of file access (reading/appending) in RFS.
@@ -137,6 +136,23 @@ func writeFile(filePath string, content []byte, appendEnable bool) error {
 	return nil
 }
 
+/*
+Name: readFileByte
+@ para: filePath string
+@ Return: string
+Func: read and then return the byte of content from file in corresponding path
+*/
+func readFileByte(filePath string) ([]byte, error) {
+	if PathExists(filePath) == false {
+		return nil, FileDoesNotExistError(filePath)
+	}
+	data, err := ioutil.ReadFile(filePath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return data, nil
+}
+
 func sendTCP(remoteIPPort string, content string) error {
 	conn, err := net.Dial("tcp", remoteIPPort)
 	if err != nil {
@@ -180,7 +196,7 @@ type RFS interface {
 	// Can return the following errors:
 	// - DisconnectedError
 	// - FileDoesNotExistError
-	// TotalRecs(fname string) (numRecs uint16, err error)
+	TotalRecs(fname string) (numRecs uint16, err error)
 
 	// Reads a record from file fname at position recordNum into
 	// memory pointed to by record. Returns a non-nil error if the
@@ -190,7 +206,7 @@ type RFS interface {
 	// - DisconnectedError
 	// - FileDoesNotExistError
 	// - RecordDoesNotExistError (indicates record at this position has not been appended yet)
-	// ReadRec(fname string, recordNum uint16, record *Record) (err error)
+	ReadRec(fname string, recordNum uint16, record *Record) (err error)
 
 	// Appends a new record to a file with name fname with the
 	// contents pointed to by record. Returns the position of the
@@ -237,27 +253,78 @@ func (f RFSInstance) ListFiles() (fnames []string, err error) {
 	return fnames, err
 }
 
+func (f RFSInstance) TotalRecs(fname string) (numRecs uint16, err error) {
+	filePath := "./" + f.localAddr + "-" + f.minerAddr + "/" + fname
+	data, err := readFileByte(filePath)
+	if err != nil {
+		return 0, err
+	}
+	length := uint16(len(data)/512 - 1)
+	err = sendTCP(f.minerAddr, "TotalRecs "+fname)
+	return length, err
+}
+
+// Reads a record from file fname at position recordNum into
+// memory pointed to by record. Returns a non-nil error if the
+// read was unsuccessful.
+//
+// Can return the following errors:
+// - DisconnectedError
+// - FileDoesNotExistError
+// - RecordDoesNotExistError (indicates record at this position has not been appended yet)
+func (f RFSInstance) ReadRec(fname string, recordNum uint16, record *Record) (err error) {
+	filePath := "./" + f.localAddr + "-" + f.minerAddr + "/" + fname
+	data, err := readFileByte(filePath)
+	if err != nil {
+		return err
+	}
+	if len(data) < (int(recordNum)+1)*512 {
+		return RecordDoesNotExistError(recordNum)
+	}
+	var m [512]byte
+	copy(m[:], data[recordNum*512:recordNum*512+512])
+	*record = Record(m)
+
+	err = sendTCP(f.minerAddr, "ReadRec "+fname+" "+strconv.Itoa(int(recordNum)))
+	return err
+}
+
+// Appends a new record to a file with name fname with the
+// contents pointed to by record. Returns the position of the
+// record that was just appended as recordNum. Returns a non-nil
+// error if the operation was unsuccessful.
+//
+// Can return the following errors:
+// - DisconnectedError
+// - FileDoesNotExistError
+// - FileMaxLenReachedError
 func (f RFSInstance) AppendRec(fname string, record *Record) (recordNum uint16, err error) {
-	// path := f.localAddr + "-" + f.minerAddr + "/" + fname
-	var network bytes.Buffer        // Stand-in for a network connection
-	enc := gob.NewEncoder(&network) // Will write to network.
-	dec := gob.NewDecoder(&network)
-	err = enc.Encode(*record)
-	if err != nil {
-		log.Fatal("encode error:", err)
+	path := f.localAddr + "-" + f.minerAddr + "/" + fname
+	if PathExists(path) == false {
+		return 0, FileDoesNotExistError(fname)
 	}
-	// HERE ARE YOUR BYTES!!!!
-	fmt.Println(network.Bytes())
-
-	// Decode (receive) the value.
-	var q Record
-	err = dec.Decode(&q)
+	m := [512]byte(*record)
+	content := []byte(m[:])
+	oridata, err := readFileByte(path)
 	if err != nil {
-		log.Fatal("decode error:", err)
+		return 0, err
 	}
-	fmt.Printf("%s\n", q)
-
-	return 0, nil
+	err = writeFile(path, content, true)
+	if err != nil {
+		return 0, err
+	}
+	data, err := readFileByte(path)
+	if err != nil {
+		return 0, err
+	}
+	length := uint16(len(data)/512 - 1)
+	err = sendTCP(f.minerAddr, "AppendRec "+fname)
+	if err != nil {
+		// if unable to connect miner, then roll back
+		writeFile(path, oridata, false)
+		return 0, err
+	}
+	return length, err
 }
 
 // The constructor for a new RFS object instance. Takes the miner's
