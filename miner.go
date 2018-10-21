@@ -268,6 +268,7 @@ func main() {
 	}
 	readConfig(os.Args[1]) // read the config.json into var config configSetting
 	fmt.Printf("MinerID:%s\nclientPort:%s\nPeerMinersAddrs:%v\nIncomingMinersAddr:%s\n", config.MinerID, config.IncomingClientsAddr, config.PeerMinersAddrs, config.IncomingMinersAddr)
+	blockFile = make(map[string]string)
 
 	go listenMiner()  // Open a port to listen msg from miners
 	go listenClient() // Open a port to listen msg from clients
