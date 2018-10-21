@@ -12,10 +12,7 @@ package rfslib
 
 import (
 	"fmt"
-	"io/ioutil"
-	"log"
 	"net"
-	"os"
 	"strconv"
 	"strings"
 )
@@ -77,83 +74,6 @@ func (e FileMaxLenReachedError) Error() string {
 	return fmt.Sprintf("RFS: File [%s] has reached its maximum length", string(e))
 }
 
-/*
-Name: PathExists
-@ para: path string
-@ Return: bool
-Func: return ture if there exists a file according to path or return false if not
-*/
-func PathExists(path string) bool {
-	_, err := os.Stat(path)
-	if err == nil {
-		return true
-	}
-	if os.IsNotExist(err) {
-		return false
-	}
-	return false
-}
-
-/*
-Name: makedir
-@ para: path string
-@ Return: None
-Func: build a new dictionary if there is no correspondinng dictionary
-*/
-func makedir(path string) {
-	if PathExists(path) == true {
-		return
-	}
-	err := os.Mkdir(path, os.ModePerm)
-	if err != nil {
-		log.Fatal(err)
-	}
-}
-
-/*
-Name: writeFile
-@ para: filePath string
-@ para: content string
-@ para: appendEnable string
-@ Return: None
-Func: write the string content into assigned path by method of overwriting or appending
-*/
-func writeFile(filePath string, content []byte, appendEnable bool) error {
-	if appendEnable == false {
-		f, err := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, os.ModePerm)
-		if err != nil {
-			log.Fatal(err)
-			return err
-		}
-		f.Write(content)
-	} else {
-		f, err := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, os.ModePerm)
-		if err != nil {
-			log.Fatal(err)
-			return err
-		}
-		f.Write(content)
-	}
-	return nil
-}
-
-/*
-Name: readFileByte
-@ para: filePath string
-@ Return: string
-Func: read and then return the byte of content from file in corresponding path
-*/
-func readFileByte(filePath string) ([]byte, error) {
-	if PathExists(filePath) == false {
-		return nil, FileDoesNotExistError(filePath)
-	}
-	data, err := ioutil.ReadFile(filePath)
-	if err != nil {
-		log.Fatal(err)
-	}
-	return data, nil
-}
-
 func json(op string, name string, content string) string {
 	if content == "nil" {
 		content = "null"
@@ -179,7 +99,7 @@ func sendTCP(remoteIPPort string, content string) (string, error) {
 	if err != nil {
 		return "", DisconnectedError(remoteIPPort)
 	}
-	fmt.Println("Reply:", string(buf[0:c]))
+	// fmt.Println("Reply:", string(buf[0:c]))
 
 	return string(buf[0:c]), nil
 }
@@ -344,6 +264,11 @@ func (f RFSInstance) AppendRec(fname string, record *Record) (recordNum uint16, 
 func Initialize(localAddr string, minerAddr string) (rfs RFS, err error) {
 	// TODO
 	// For now return a DisconnectedError
-	makedir(localAddr + "-" + minerAddr)
+	conn, err := net.Dial("tcp", minerAddr)
+	if err != nil {
+		return nil, DisconnectedError(minerAddr)
+	}
+	defer conn.Close() /// wait
+
 	return RFSInstance{localAddr, minerAddr}, nil
 }
