@@ -11,7 +11,7 @@ type ClientMsg struct {
 	Content   string
 }
 
-func sendTCP(remoteIPPort string) {
+func sendMiner(remoteIPPort string) {
 	client, err := rpc.DialHTTP("tcp", remoteIPPort)
 	if err != nil {
 		log.Fatal("dialing:", err)

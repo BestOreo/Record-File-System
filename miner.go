@@ -25,7 +25,7 @@ type configSetting struct {
 	PowPerNoOpBlock        int
 	ConfirmsPerFileCreate  int
 	ConfirmsPerFileAppend  int
-	MinerID                int
+	MinerID                string
 	PeerMinersAddrs        []string
 	IncomingMinersAddr     string
 	OutgoingMinersIP       string
@@ -35,8 +35,7 @@ type ClientHandle int
 type MinerHandle int
 type ClientMsg struct {
 	Operation string
-	FileName  string
-	Content   string
+	MinerID   string
 }
 type jsonmsg struct {
 	op      string
@@ -83,6 +82,41 @@ func readFileByte(filePath string) []byte {
 	return data
 }
 
+func checkfile(fname string) bool {
+	for k := range blockFile {
+		if k == fname {
+			return true
+		}
+	}
+	return false
+}
+
+func getFileList() string {
+	res := ""
+	for fname := range blockFile {
+		if len(res) == 0 {
+			res += fname
+		} else {
+			res += ";" + fname
+		}
+	}
+	if len(res) == 0 {
+		res = "No book"
+	}
+	return res
+}
+
+func showfiles() {
+	println("------------------------")
+	for k, v := range blockFile {
+		fmt.Printf("Name:%s  Length:%d\n", k, len(v))
+		for i := 0; i*512 < len(v); i++ {
+			fmt.Printf("%d. %s\n", i, []byte(v)[i*512:i*512+512])
+		}
+	}
+	println("------------------------")
+}
+
 func printColorFont(color string, value string) {
 	if color == "red" {
 		fmt.Printf("%c[1;0;31m%s%c[0m\n", 0x1B, value, 0x1B) // red font
@@ -101,12 +135,6 @@ func getTime() string {
 	return time.Now().Format("2006-01-02 15:04:05")
 }
 
-func (t *MinerHandle) Communication(args *ClientMsg, reply *int) error {
-	*reply = 0
-	println("Miner", args.Content, args.FileName, args.Operation)
-	return nil
-}
-
 func listenClient() {
 	ipport := strings.Split(config.IncomingClientsAddr, ":")
 	ip := ipport[0]
@@ -116,7 +144,7 @@ func listenClient() {
 		fmt.Println("Fail to monitor ", err.Error())
 		return
 	}
-	fmt.Println("client port:", config.IncomingClientsAddr)
+	// fmt.Println("client port:", config.IncomingClientsAddr)
 
 	for {
 		conn, err := listen.AcceptTCP()
@@ -150,6 +178,9 @@ func listenClient() {
 						conn.Write([]byte("FileExistsError"))
 					} else {
 						blockFile[msgjson["name"]] = "" // create a new files
+
+						// codes about blockchain
+
 						conn.Write([]byte("success"))
 					}
 					// Client ListFiles
@@ -186,6 +217,9 @@ func listenClient() {
 						var m [512]byte
 						copy(m[:], []byte(msgjson["content"]))
 						blockFile[msgjson["name"]] += string(m[:])
+
+						// codes about blockchain
+
 						conn.Write([]byte(strconv.Itoa(len(blockFile[msgjson["name"]])/512 - 1)))
 					}
 				}
@@ -205,43 +239,26 @@ func listenMiner() {
 	}
 }
 
-func checkfile(fname string) bool {
-	for k := range blockFile {
-		if k == fname {
-			return true
-		}
+func sendMiner(remoteIPPort string, args ClientMsg) {
+	client, err := rpc.DialHTTP("tcp", remoteIPPort)
+	if err != nil {
+		log.Fatal("dialing:", err)
 	}
-	return false
+	// Synchronous call
+	var reply int
+	err = client.Call("MinerHandle.MinerTalk", args, &reply)
+	if err != nil {
+		log.Fatal("tcp error:", err)
+	}
+	if reply == 0 {
+		fmt.Printf("send to %s successfully\n", remoteIPPort)
+	}
 }
 
-func getFileList() string {
-	res := ""
-	for fname := range blockFile {
-		if len(res) == 0 {
-			res += fname
-		} else {
-			res += ";" + fname
-		}
-	}
-	if len(res) == 0 {
-		res = "No book"
-	}
-	return res
-}
-
-func showfiles() {
-	println("------------------------")
-	for k, v := range blockFile {
-		fmt.Printf("Name:%s  Length:%d\n", k, len(v))
-		for i := 0; i*512 < len(v); i++ {
-			fmt.Printf("%d. %s\n", i, []byte(v)[i*512:i*512+512])
-		}
-	}
-	println("------------------------")
-}
-
-func init() {
-	blockFile = make(map[string]string)
+func (t *MinerHandle) MinerTalk(args *ClientMsg, reply *int) error {
+	*reply = 0
+	println(args.Operation, "from", args.MinerID)
+	return nil
 }
 
 func main() {
@@ -249,16 +266,23 @@ func main() {
 		println("go run miner.go [settings]")
 		return
 	}
-	readConfig(os.Args[1])
+	readConfig(os.Args[1]) // read the config.json into var config configSetting
+	fmt.Printf("MinerID:%s\nclientPort:%s\nPeerMinersAddrs:%v\nIncomingMinersAddr:%s\n", config.MinerID, config.IncomingClientsAddr, config.PeerMinersAddrs, config.IncomingMinersAddr)
 
-	go listenMiner()
-	go listenClient()
+	go listenMiner()  // Open a port to listen msg from miners
+	go listenClient() // Open a port to listen msg from clients
 
+	// command line control
 	reader := bufio.NewReader(os.Stdin)
 	for {
 		text, _ := reader.ReadString('\n')
 		if text == "showfiles\n" {
 			showfiles()
+		} else if strings.Contains(text, "miner") == true {
+			// demo : inform neiboring peers
+			for _, ip := range config.PeerMinersAddrs {
+				sendMiner(ip, ClientMsg{config.MinerID + " says hello ", config.MinerID})
+			}
 		}
 	}
 }
