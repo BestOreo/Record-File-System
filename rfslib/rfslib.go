@@ -17,6 +17,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 )
 
 // A Record is the unit of file access (reading/appending) in RFS.
@@ -153,21 +154,32 @@ func readFileByte(filePath string) ([]byte, error) {
 	return data, nil
 }
 
-func sendTCP(remoteIPPort string, content string) error {
+func json(op string, name string, content string) string {
+	if content == "nil" {
+		content = "null"
+	}
+	if name == "nil" {
+		name = "null"
+	}
+	res := "{\"op\":\"" + op + "\",\"name\":\"" + name + "\",\"content\":\"" + content + "\"}"
+	// println(res)
+	return res
+}
+
+func sendTCP(remoteIPPort string, content string) (string, error) {
 	conn, err := net.Dial("tcp", remoteIPPort)
 	if err != nil {
-		return DisconnectedError(remoteIPPort)
+		return "", DisconnectedError(remoteIPPort)
 	}
-	// fmt.Println("已连接服务器")
 
 	conn.Write([]byte(content))
-	buf := make([]byte, 128)
+	buf := make([]byte, 512)
 	c, err := conn.Read(buf)
 	if err != nil {
-		return DisconnectedError(remoteIPPort)
+		return "", DisconnectedError(remoteIPPort)
 	}
-	fmt.Println(string(buf[0:c]))
-	return nil
+	fmt.Println("Reply:", string(buf[0:c]))
+	return string(buf[0:c]), nil
 }
 
 // </ERROR DEFINITIONS>
@@ -230,27 +242,26 @@ type RFSInstance struct {
 // - FileExistsError
 // - BadFilenameError
 func (f RFSInstance) CreateFile(fname string) (err error) {
-	filePath := "./" + f.localAddr + "-" + f.minerAddr + "/" + fname
 	if len(fname) > 64 {
 		return BadFilenameError(fname)
-	} else if PathExists(filePath) == true {
+	}
+	reply, err := sendTCP(f.minerAddr, json("CreateFile", fname, "nil"))
+	if reply == "FileExistsError" {
 		return FileExistsError(fname)
 	}
-	sendTCP(f.minerAddr, "CreateFile "+fname)
-	return writeFile(filePath, []byte(""), false)
+	return err
 }
 
-func (f RFSInstance) ListFiles() (fnames []string, err error) {
-	path := f.localAddr + "-" + f.minerAddr
-	dir, _ := ioutil.ReadDir(path)
-	count := 0
-	fnames = make([]string, len(dir))
-	for _, file := range dir {
-		fnames[count] = file.Name()
-		count++
+func (f RFSInstance) ListFiles() ([]string, error) {
+	reply, err := sendTCP(f.minerAddr, json("ListFiles", "nil", "nil"))
+	if err != nil {
+		return nil, err
 	}
-	err = sendTCP(f.minerAddr, "ListFiles()")
-	return fnames, err
+	if len(reply) == 0 {
+		return nil, nil
+	}
+	list := strings.Split(reply, ";")
+	return list, err
 }
 
 func (f RFSInstance) TotalRecs(fname string) (numRecs uint16, err error) {
@@ -260,7 +271,7 @@ func (f RFSInstance) TotalRecs(fname string) (numRecs uint16, err error) {
 		return 0, err
 	}
 	length := uint16(len(data)/512 - 1)
-	err = sendTCP(f.minerAddr, "TotalRecs "+fname)
+	_, err = sendTCP(f.minerAddr, json("TotalRecs", fname, "nil"))
 	return length, err
 }
 
@@ -285,7 +296,7 @@ func (f RFSInstance) ReadRec(fname string, recordNum uint16, record *Record) (er
 	copy(m[:], data[recordNum*512:recordNum*512+512])
 	*record = Record(m)
 
-	err = sendTCP(f.minerAddr, "ReadRec "+fname+" "+strconv.Itoa(int(recordNum)))
+	_, err = sendTCP(f.minerAddr, json("ReadRec", fname, strconv.Itoa(int(recordNum))))
 	return err
 }
 
@@ -318,7 +329,7 @@ func (f RFSInstance) AppendRec(fname string, record *Record) (recordNum uint16, 
 		return 0, err
 	}
 	length := uint16(len(data)/512 - 1)
-	err = sendTCP(f.minerAddr, "AppendRec "+fname)
+	_, err = sendTCP(f.minerAddr, json("AppendRec", fname, string(content)))
 	if err != nil {
 		// if unable to connect miner, then roll back
 		writeFile(path, oridata, false)
