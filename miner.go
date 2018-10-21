@@ -43,9 +43,18 @@ type jsonmsg struct {
 	name    string
 	content string
 }
+type Record [512]byte
 
 var config configSetting
+
 var blockFile map[string]string /*创建集合 */
+
+// type filenode struct {
+// 	count   int
+// 	content [65535]Record
+// }
+
+// var blockFile map[string]filenode
 
 func readConfig(configFile string) {
 	// Open our jsonFile
@@ -139,7 +148,7 @@ func listenClient() {
 					if checkfile(msgjson["name"]) == true {
 						conn.Write([]byte("FileExistsError"))
 					} else {
-						blockFile[msgjson["name"]] = ""
+						blockFile[msgjson["name"]] = "" // create a new files
 						conn.Write([]byte("success"))
 					}
 				} else if msgjson["op"] == "ListFiles" {
@@ -149,7 +158,10 @@ func listenClient() {
 				} else if msgjson["op"] == "ReadRec" {
 					println("4")
 				} else if msgjson["op"] == "AppendRec" {
-					println("5")
+					var m [512]byte
+					copy(m[:], []byte(msgjson["content"]))
+					blockFile[msgjson["name"]] += string(m[:])
+					conn.Write([]byte("success"))
 				}
 
 			}
@@ -195,7 +207,10 @@ func getFileList() string {
 func showfiles() {
 	println("------------------------")
 	for k, v := range blockFile {
-		fmt.Printf("%s: %s\n", k, v)
+		fmt.Printf("Name:%s  Length:%d\n", k, len(v))
+		for i := 0; i*512 < len(v); i++ {
+			fmt.Printf("%d. %s\n", i, []byte(v)[i*512:i*512+512])
+		}
 	}
 	println("------------------------")
 }

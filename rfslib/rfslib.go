@@ -310,32 +310,16 @@ func (f RFSInstance) ReadRec(fname string, recordNum uint16, record *Record) (er
 // - FileDoesNotExistError
 // - FileMaxLenReachedError
 func (f RFSInstance) AppendRec(fname string, record *Record) (recordNum uint16, err error) {
-	path := f.localAddr + "-" + f.minerAddr + "/" + fname
-	if PathExists(path) == false {
-		return 0, FileDoesNotExistError(fname)
-	}
 	m := [512]byte(*record)
-	content := []byte(m[:])
-	oridata, err := readFileByte(path)
-	if err != nil {
-		return 0, err
+	var i int
+	for i = 0; i < 512; i++ {
+		if m[i] == 0 { // json can't have \x00, so we need to find the end of the record and discard all \x00
+			break // e.g. the record is ['a','b',0,0,0,0,0,...,0,0,0],we only send "ab" as string
+		}
 	}
-	err = writeFile(path, content, true)
-	if err != nil {
-		return 0, err
-	}
-	data, err := readFileByte(path)
-	if err != nil {
-		return 0, err
-	}
-	length := uint16(len(data)/512 - 1)
+	content := string(m[0:i])
 	_, err = sendTCP(f.minerAddr, json("AppendRec", fname, string(content)))
-	if err != nil {
-		// if unable to connect miner, then roll back
-		writeFile(path, oridata, false)
-		return 0, err
-	}
-	return length, err
+	return 0, err
 }
 
 // The constructor for a new RFS object instance. Takes the miner's

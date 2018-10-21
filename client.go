@@ -14,21 +14,21 @@ func main() {
 	// 	log.Fatal(err)
 	// }
 
-	ListFiles, err := rfs.ListFiles()
-	if err != nil {
-		log.Fatal(err)
-	}
-	for _, i := range ListFiles {
-		println(i)
-	}
-
-	// s := rfslib.Record{'a', 'b', 'c', 'd'}
-	// l, err := rfs.AppendRec("text.txt", &s)
+	// ListFiles, err := rfs.ListFiles()
 	// if err != nil {
 	// 	log.Fatal(err)
-	// } else {
-	// 	println(l)
 	// }
+	// for _, i := range ListFiles {
+	// 	println(i)
+	// }
+
+	s := rfslib.Record{'a', 'b', 'c', 'd', 'e', 'f'}
+	l, err := rfs.AppendRec("text.txt", &s)
+	if err != nil {
+		log.Fatal(err)
+	} else {
+		println(l)
+	}
 
 	// l, err := rfs.TotalRecs("text.txt")
 	// if err != nil {
