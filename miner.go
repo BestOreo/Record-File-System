@@ -127,7 +127,7 @@ func listenClient() {
 		}
 		defer conn.Close()
 		go func() {
-			data := make([]byte, 512)
+			data := make([]byte, 1024) // data received by tcp
 			for {
 				i, err := conn.Read(data)
 				if err != nil {
@@ -144,6 +144,7 @@ func listenClient() {
 				}
 				fmt.Println(msgjson["op"], msgjson["name"], msgjson["content"])
 
+				// Client CreateFile
 				if msgjson["op"] == "CreateFile" {
 					if checkfile(msgjson["name"]) == true {
 						conn.Write([]byte("FileExistsError"))
@@ -151,19 +152,43 @@ func listenClient() {
 						blockFile[msgjson["name"]] = "" // create a new files
 						conn.Write([]byte("success"))
 					}
+					// Client ListFiles
 				} else if msgjson["op"] == "ListFiles" {
 					conn.Write([]byte(getFileList()))
+					// Client TotalRecs
 				} else if msgjson["op"] == "TotalRecs" {
-					println("3")
+					if checkfile(msgjson["name"]) == false {
+						conn.Write([]byte("FileDoesNotExistError"))
+					} else {
+						conn.Write([]byte(strconv.Itoa(len(blockFile[msgjson["name"]]) / 512)))
+					}
+					// Client ReadRec
 				} else if msgjson["op"] == "ReadRec" {
-					println("4")
+					pos, err := strconv.Atoi(msgjson["content"])
+					if err != nil {
+						log.Fatal("record num isn't integer")
+						continue
+					}
+					if checkfile(msgjson["name"]) == false {
+						conn.Write([]byte("FileDoesNotExistError"))
+					} else if len(blockFile[msgjson["name"]])/512-1 < pos {
+						conn.Write([]byte("RecordDoesNotExistError"))
+					} else {
+						conn.Write([]byte(blockFile[msgjson["name"]][pos*512 : pos*512+512]))
+					}
+					// Client AppendRec
 				} else if msgjson["op"] == "AppendRec" {
-					var m [512]byte
-					copy(m[:], []byte(msgjson["content"]))
-					blockFile[msgjson["name"]] += string(m[:])
-					conn.Write([]byte("success"))
+					if checkfile(msgjson["name"]) == false {
+						conn.Write([]byte("FileDoesNotExistError"))
+					} else if len(msgjson["content"])/512 > 655354 { // have at most 65,5354 (uint16) records
+						conn.Write([]byte("FileMaxLenReachedError"))
+					} else {
+						var m [512]byte
+						copy(m[:], []byte(msgjson["content"]))
+						blockFile[msgjson["name"]] += string(m[:])
+						conn.Write([]byte(strconv.Itoa(len(blockFile[msgjson["name"]])/512 - 1)))
+					}
 				}
-
 			}
 		}()
 	}

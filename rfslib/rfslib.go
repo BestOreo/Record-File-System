@@ -168,17 +168,19 @@ func json(op string, name string, content string) string {
 
 func sendTCP(remoteIPPort string, content string) (string, error) {
 	conn, err := net.Dial("tcp", remoteIPPort)
+	defer conn.Close() /// wait
 	if err != nil {
 		return "", DisconnectedError(remoteIPPort)
 	}
 
 	conn.Write([]byte(content))
-	buf := make([]byte, 512)
+	buf := make([]byte, 1024)
 	c, err := conn.Read(buf)
 	if err != nil {
 		return "", DisconnectedError(remoteIPPort)
 	}
 	fmt.Println("Reply:", string(buf[0:c]))
+
 	return string(buf[0:c]), nil
 }
 
@@ -265,14 +267,15 @@ func (f RFSInstance) ListFiles() ([]string, error) {
 }
 
 func (f RFSInstance) TotalRecs(fname string) (numRecs uint16, err error) {
-	filePath := "./" + f.localAddr + "-" + f.minerAddr + "/" + fname
-	data, err := readFileByte(filePath)
+	reply, err := sendTCP(f.minerAddr, json("TotalRecs", fname, "nil"))
 	if err != nil {
 		return 0, err
 	}
-	length := uint16(len(data)/512 - 1)
-	_, err = sendTCP(f.minerAddr, json("TotalRecs", fname, "nil"))
-	return length, err
+	if reply == "FileDoesNotExistError" {
+		return 0, FileDoesNotExistError(fname)
+	}
+	l, _ := strconv.Atoi(reply)
+	return uint16(l), err
 }
 
 // Reads a record from file fname at position recordNum into
@@ -284,19 +287,16 @@ func (f RFSInstance) TotalRecs(fname string) (numRecs uint16, err error) {
 // - FileDoesNotExistError
 // - RecordDoesNotExistError (indicates record at this position has not been appended yet)
 func (f RFSInstance) ReadRec(fname string, recordNum uint16, record *Record) (err error) {
-	filePath := "./" + f.localAddr + "-" + f.minerAddr + "/" + fname
-	data, err := readFileByte(filePath)
+	reply, err := sendTCP(f.minerAddr, json("ReadRec", fname, strconv.Itoa(int(recordNum))))
 	if err != nil {
 		return err
-	}
-	if len(data) < (int(recordNum)+1)*512 {
+	} else if reply == "FileDoesNotExistError" {
+		return FileDoesNotExistError(fname)
+	} else if reply == "RecordDoesNotExistError" {
 		return RecordDoesNotExistError(recordNum)
+	} else {
+		copy((*record)[:], reply)
 	}
-	var m [512]byte
-	copy(m[:], data[recordNum*512:recordNum*512+512])
-	*record = Record(m)
-
-	_, err = sendTCP(f.minerAddr, json("ReadRec", fname, strconv.Itoa(int(recordNum))))
 	return err
 }
 
@@ -318,8 +318,17 @@ func (f RFSInstance) AppendRec(fname string, record *Record) (recordNum uint16, 
 		}
 	}
 	content := string(m[0:i])
-	_, err = sendTCP(f.minerAddr, json("AppendRec", fname, string(content)))
-	return 0, err
+	reply, err := sendTCP(f.minerAddr, json("AppendRec", fname, string(content)))
+	if err != nil {
+		return 0, err
+	}
+	if reply == "FileDoesNotExistError" {
+		return 0, FileDoesNotExistError(fname)
+	} else if reply == "FileMaxLenReachedError" {
+		return 0, FileMaxLenReachedError(fname)
+	}
+	l, _ := strconv.Atoi(reply)
+	return uint16(l), err
 }
 
 // The constructor for a new RFS object instance. Takes the miner's
