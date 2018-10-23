@@ -2,6 +2,9 @@ package main
 
 import (
 	"bufio"
+	"bytes"
+	"crypto/md5"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -12,6 +15,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -47,6 +51,8 @@ type Record [512]byte
 var config configSetting
 
 var blockFile map[string]string /*创建集合 */
+
+var minerChain *BlockChain
 
 // type filenode struct {
 // 	count   int
@@ -178,9 +184,8 @@ func listenClient() {
 						conn.Write([]byte("FileExistsError"))
 					} else {
 						blockFile[msgjson["name"]] = "" // create a new files
-
+						minerChain.createTransaction(msgjson["op"], msgjson["name"], msgjson["content"])
 						// codes about blockchain
-
 						conn.Write([]byte("success"))
 					}
 					// Client ListFiles
@@ -232,7 +237,14 @@ func listenMiner() {
 	miner := new(MinerHandle)
 	rpc.Register(miner)
 	rpc.HandleHTTP()
-
+	minerChain = &BlockChain{
+		chainLock:    &sync.Mutex{},
+		chain:        make([]*Block, 0),
+		txBuffer:     make([]*Tx, 0),
+		txBufferSize: 10,
+		difficulty:   2,
+	}
+	minerChain.init()
 	err := http.ListenAndServe(config.IncomingMinersAddr, nil)
 	if err != nil {
 		fmt.Println(err.Error())
@@ -260,6 +272,150 @@ func (t *MinerHandle) MinerTalk(args *ClientMsg, reply *int) error {
 	println(args.Operation, "from", args.MinerID)
 	return nil
 }
+
+/*** Blockchain ***/
+
+// TX_BUFFER_SIZE is the maximum number of tx's from clients before a new block is created
+var TX_BUFFER_SIZE = 1
+
+// Tx represents a single transaction from a client
+type Tx struct {
+	opType  string
+	content string
+	minerID string
+}
+
+// Block is a single structure in the chain
+type Block struct {
+	prevHash     string
+	nonce        uint32
+	transactions []*Tx
+}
+
+// BlockChain is the central datastructure
+type BlockChain struct {
+	chainLock    *sync.Mutex
+	chain        []*Block
+	txBuffer     []*Tx
+	txBufferSize int
+	difficulty   int
+}
+
+func (bc *BlockChain) init() {
+	// create genesis block
+	block := &Block{}
+	block.prevHash = ""
+	block.nonce = 0
+	bc.addBlockToChain(block)
+	fmt.Println("Genisis block created.")
+}
+
+func (bc *BlockChain) addBlockToChain(block *Block) {
+	// add it to the chain
+	bc.chainLock.Lock()
+	bc.chain = append(bc.chain, block)
+	bc.chainLock.Unlock()
+
+	fmt.Println("Block Added")
+}
+
+func (bc *BlockChain) createBlock() {
+	// set prev hash
+	block := &Block{}
+	block.prevHash = bc.hashBlock(bc.chain[len(bc.chain)-1])
+	block.transactions = bc.txBuffer
+
+	// mine the block to find solution
+	block.nonce = bc.proofOfWork(block)
+	bc.addBlockToChain(block)
+	fmt.Println("Chain so far: ---")
+	bc.printChain()
+	fmt.Println("---")
+
+}
+func (bc *BlockChain) proofOfWork(block *Block) (nonce uint32) {
+	nonce = block.nonce
+	str := bc.hashBlock(block)
+	for {
+		foundSolution := strings.HasSuffix(str, "00")
+		if foundSolution {
+			break
+		}
+		nonce++
+		str = bc.hashBlock(block)
+	}
+	return nonce
+}
+
+func (bc *BlockChain) hashBlock(block *Block) (str string) {
+	hash := md5.New()
+	blockData := bc.getBlockBytes(block)
+	hash.Write(blockData)
+	str = hex.EncodeToString(hash.Sum(nil))
+	return str
+}
+func (bc *BlockChain) createTransaction(opType string, content string, minerID string) {
+	currBuff := len(bc.txBuffer)
+	fmt.Println(currBuff)
+	if currBuff <= TX_BUFFER_SIZE {
+		bc.chainLock.Lock()
+		tx := Tx{
+			opType,
+			content,
+			minerID,
+		}
+		bc.txBuffer = append(bc.txBuffer, &tx)
+		bc.chainLock.Unlock()
+	} else {
+		bc.createBlock()
+	}
+}
+
+func (bc *BlockChain) getBlockBytes(block *Block) []byte {
+	txString := ""
+	for _, tx := range block.transactions {
+		txString = tx.content + tx.opType + tx.minerID
+	}
+	timeBytes, err := time.Now().MarshalJSON()
+	if err != nil {
+		panic("time failed")
+	}
+	nonceStr := fmt.Sprint(block.nonce)
+	data := bytes.Join(
+		[][]byte{
+			[]byte(block.prevHash),
+			[]byte(txString),
+			timeBytes,
+			[]byte(nonceStr),
+		},
+		[]byte{},
+	)
+	return data
+}
+
+func (bc *BlockChain) printChain() {
+	for idx, block := range bc.chain {
+		fmt.Println("****************************")
+		fmt.Println("Block Number: ")
+		fmt.Println(idx)
+		fmt.Println("Prev Hash: ")
+		fmt.Println(block.prevHash)
+		fmt.Println("Transactions: ")
+		for _, tx := range block.transactions {
+			fmt.Println(".............")
+			fmt.Println("OP Type: ")
+			fmt.Println(tx.opType)
+			fmt.Println("Content: ")
+			fmt.Println(tx.content)
+			fmt.Println("MinerId: ")
+			fmt.Println(tx.minerID)
+			fmt.Println(".............")
+		}
+		fmt.Println("****************************")
+	}
+}
+
+/*** END Blockchain ***/
 
 func main() {
 	if len(os.Args) != 2 {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"time"
 
 	"./rfslib"
 )
@@ -10,6 +11,32 @@ func main() {
 	rfs, _ := rfslib.Initialize("127.0.0.1:8000", "127.0.0.1:9090")
 
 	err := rfs.CreateFile("text.txt")
+
+	if err != nil {
+		log.Fatal(err)
+	}
+	time.Sleep(1000)
+	err = rfs.CreateFile("text2.txt")
+	if err != nil {
+		log.Fatal(err)
+	}
+	time.Sleep(1000)
+	err = rfs.CreateFile("text3.txt")
+	if err != nil {
+		log.Fatal(err)
+	}
+	time.Sleep(1000)
+	err = rfs.CreateFile("text4.txt")
+	if err != nil {
+		log.Fatal(err)
+	}
+	time.Sleep(1000)
+	err = rfs.CreateFile("text5.txt")
+	if err != nil {
+		log.Fatal(err)
+	}
+	time.Sleep(1000)
+	err = rfs.CreateFile("text6.txt")
 	if err != nil {
 		log.Fatal(err)
 	}
