@@ -184,6 +184,9 @@ func listenClient() {
 						conn.Write([]byte("FileExistsError"))
 					} else {
 						blockFile[msgjson["name"]] = "" // create a new files
+						fmt.Println("-----------------")
+						fmt.Println(msgjson)
+						fmt.Println("-----------------")
 						minerChain.createTransaction(msgjson["op"], msgjson["name"], msgjson["content"])
 						// codes about blockchain
 						conn.Write([]byte("success"))
@@ -328,10 +331,8 @@ func (bc *BlockChain) createBlock() {
 	// mine the block to find solution
 	block.nonce = bc.proofOfWork(block)
 	bc.addBlockToChain(block)
-	fmt.Println("Chain so far: ---")
+	bc.txBuffer = make([]*Tx, 0)
 	bc.printChain()
-	fmt.Println("---")
-
 }
 func (bc *BlockChain) proofOfWork(block *Block) (nonce uint32) {
 	nonce = block.nonce
@@ -342,8 +343,10 @@ func (bc *BlockChain) proofOfWork(block *Block) (nonce uint32) {
 			break
 		}
 		nonce++
+		block.nonce = nonce
 		str = bc.hashBlock(block)
 	}
+	fmt.Println(str)
 	return nonce
 }
 
@@ -354,17 +357,17 @@ func (bc *BlockChain) hashBlock(block *Block) (str string) {
 	str = hex.EncodeToString(hash.Sum(nil))
 	return str
 }
-func (bc *BlockChain) createTransaction(opType string, content string, minerID string) {
+func (bc *BlockChain) createTransaction(opType string, fileName string, minerID string) {
 	currBuff := len(bc.txBuffer)
 	fmt.Println(currBuff)
 	if currBuff <= TX_BUFFER_SIZE {
 		bc.chainLock.Lock()
-		tx := Tx{
+		tx := &Tx{
 			opType,
-			content,
+			fileName,
 			minerID,
 		}
-		bc.txBuffer = append(bc.txBuffer, &tx)
+		bc.txBuffer = append(bc.txBuffer, tx)
 		bc.chainLock.Unlock()
 	} else {
 		bc.createBlock()
@@ -376,16 +379,16 @@ func (bc *BlockChain) getBlockBytes(block *Block) []byte {
 	for _, tx := range block.transactions {
 		txString = tx.content + tx.opType + tx.minerID
 	}
-	timeBytes, err := time.Now().MarshalJSON()
-	if err != nil {
-		panic("time failed")
-	}
+	// timeBytes, err := time.Now().MarshalJSON()
+	// if err != nil {
+	// 	panic("time failed")
+	// }
 	nonceStr := fmt.Sprint(block.nonce)
 	data := bytes.Join(
 		[][]byte{
 			[]byte(block.prevHash),
 			[]byte(txString),
-			timeBytes,
+			// timeBytes,
 			[]byte(nonceStr),
 		},
 		[]byte{},
