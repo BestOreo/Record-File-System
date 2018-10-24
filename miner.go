@@ -41,16 +41,19 @@ type ClientMsg struct {
 	Operation string
 	MinerID   string
 }
-type jsonmsg struct {
-	op      string
-	name    string
-	content string
+type OpMsg struct {
+	MinerID string
+	MsgID   uint
+	Op      string
+	Name    string
+	Content string
 }
 type Record [512]byte
 
 var config configSetting
-
+var globalMsgID uint
 var blockFile map[string]string /*创建集合 */
+var recordQueue []OpMsg
 
 var minerChain *BlockChain
 
@@ -107,7 +110,7 @@ func getFileList() string {
 		}
 	}
 	if len(res) == 0 {
-		res = "No book"
+		res = "No File"
 	}
 	return res
 }
@@ -121,6 +124,24 @@ func showfiles() {
 		}
 	}
 	println("------------------------")
+}
+
+func pushRecordQueue(opmsg OpMsg) {
+	recordQueue = append(recordQueue, opmsg)
+}
+
+func popRecordQueue() OpMsg {
+	head := recordQueue[0]
+	recordQueue = recordQueue[1:]
+	return head
+}
+
+func printRecordQueue() {
+	println("---------------------------")
+	for i := 0; i < len(recordQueue); i++ {
+		println(recordQueue[i].MinerID, recordQueue[i].MsgID, recordQueue[i].Op)
+	}
+	println("---------------------------")
 }
 
 func printColorFont(color string, value string) {
@@ -139,6 +160,91 @@ func printColorFont(color string, value string) {
 
 func getTime() string {
 	return time.Now().Format("2006-01-02 15:04:05")
+}
+
+func (t *MinerHandle) MinerTalk(args *ClientMsg, reply *int) error {
+	*reply = 0
+	println(args.Operation, "from", args.MinerID)
+	return nil
+}
+
+func checkOperationInQueue(msg *OpMsg) bool {
+	for i := 0; i < len(recordQueue); i++ {
+		if recordQueue[i].MinerID == msg.MinerID && recordQueue[i].MsgID == msg.MsgID {
+			return true
+		}
+	}
+	return false
+}
+
+func (t *MinerHandle) ShareOperation(record *OpMsg, reply *int) error {
+	*reply = 0
+	println("------------")
+	println("| Msg: ", record.MinerID, record.MsgID, record.Op, record.Name, record.Content)
+	println("------------")
+	if checkOperationInQueue(record) == false {
+		printColorFont("green", "pushed into queue")
+		pushRecordQueue(*record)
+		broadcastOperations(*record)
+	}
+	return nil
+}
+
+func listenMiner() {
+	miner := new(MinerHandle)
+	rpc.Register(miner)
+	rpc.HandleHTTP()
+	minerChain = &BlockChain{
+		chainLock:    &sync.Mutex{},
+		chain:        make([]*Block, 0),
+		txBuffer:     make([]*Tx, 0),
+		txBufferSize: 10,
+		difficulty:   2,
+	}
+	minerChain.init()
+	err := http.ListenAndServe(config.IncomingMinersAddr, nil)
+	if err != nil {
+		fmt.Println(err.Error())
+	}
+}
+
+func generateOpMsg(op string, name string, content string) OpMsg {
+	operationMsg := OpMsg{config.MinerID, globalMsgID, op, name, content}
+	globalMsgID++
+	return operationMsg
+}
+
+func sendMiner(remoteIPPort string, args ClientMsg) {
+	client, err := rpc.DialHTTP("tcp", remoteIPPort)
+	if err != nil {
+		log.Fatal("dialing:", err)
+	}
+	// Synchronous call
+	var reply int
+	err = client.Call("MinerHandle.MinerTalk", args, &reply)
+	if err != nil {
+		log.Fatal("tcp error:", err)
+	}
+	if reply == 0 {
+		fmt.Printf("%s: send to %s successfully\n", getTime(), remoteIPPort)
+	}
+}
+
+func broadcastOperations(operationMsg OpMsg) {
+	for _, ip := range config.PeerMinersAddrs {
+		client, err := rpc.DialHTTP("tcp", ip)
+		if err != nil {
+			log.Fatal("dialing:", err)
+		}
+		var reply int
+		err = client.Call("MinerHandle.ShareOperation", operationMsg, &reply)
+		if err != nil {
+			log.Fatal("tcp error:", err)
+		}
+		if reply == 0 {
+			fmt.Printf("%s: send to %s successfully\n", getTime(), remoteIPPort)
+		}
+	}
 }
 
 func listenClient() {
@@ -190,6 +296,9 @@ func listenClient() {
 						minerChain.createTransaction(msgjson["op"], msgjson["name"], msgjson["content"])
 						// codes about blockchain
 						conn.Write([]byte("success"))
+						operationMsg := generateOpMsg(msgjson["op"], msgjson["name"], msgjson["content"])
+						pushRecordQueue(operationMsg)
+						broadcastOperations(operationMsg)
 					}
 					// Client ListFiles
 				} else if msgjson["op"] == "ListFiles" {
@@ -229,51 +338,14 @@ func listenClient() {
 						// codes about blockchain
 
 						conn.Write([]byte(strconv.Itoa(len(blockFile[msgjson["name"]])/512 - 1)))
+						operationMsg := generateOpMsg(msgjson["op"], msgjson["name"], msgjson["content"])
+						pushRecordQueue(operationMsg)
+						broadcastOperations(operationMsg)
 					}
 				}
 			}
 		}()
 	}
-}
-
-func listenMiner() {
-	miner := new(MinerHandle)
-	rpc.Register(miner)
-	rpc.HandleHTTP()
-	minerChain = &BlockChain{
-		chainLock:    &sync.Mutex{},
-		chain:        make([]*Block, 0),
-		txBuffer:     make([]*Tx, 0),
-		txBufferSize: 10,
-		difficulty:   2,
-	}
-	minerChain.init()
-	err := http.ListenAndServe(config.IncomingMinersAddr, nil)
-	if err != nil {
-		fmt.Println(err.Error())
-	}
-}
-
-func sendMiner(remoteIPPort string, args ClientMsg) {
-	client, err := rpc.DialHTTP("tcp", remoteIPPort)
-	if err != nil {
-		log.Fatal("dialing:", err)
-	}
-	// Synchronous call
-	var reply int
-	err = client.Call("MinerHandle.MinerTalk", args, &reply)
-	if err != nil {
-		log.Fatal("tcp error:", err)
-	}
-	if reply == 0 {
-		fmt.Printf("send to %s successfully\n", remoteIPPort)
-	}
-}
-
-func (t *MinerHandle) MinerTalk(args *ClientMsg, reply *int) error {
-	*reply = 0
-	println(args.Operation, "from", args.MinerID)
-	return nil
 }
 
 /*** Blockchain ***/
@@ -418,6 +490,11 @@ func (bc *BlockChain) printChain() {
 	}
 }
 
+func Initial() {
+	blockFile = make(map[string]string)
+	recordQueue = make([]OpMsg, 0)
+}
+
 /*** END Blockchain ***/
 
 func main() {
@@ -427,7 +504,7 @@ func main() {
 	}
 	readConfig(os.Args[1]) // read the config.json into var config configSetting
 	fmt.Printf("MinerID:%s\nclientPort:%s\nPeerMinersAddrs:%v\nIncomingMinersAddr:%s\n", config.MinerID, config.IncomingClientsAddr, config.PeerMinersAddrs, config.IncomingMinersAddr)
-	blockFile = make(map[string]string)
+	Initial()
 
 	go listenMiner()  // Open a port to listen msg from miners
 	go listenClient() // Open a port to listen msg from clients
@@ -443,6 +520,10 @@ func main() {
 			for _, ip := range config.PeerMinersAddrs {
 				sendMiner(ip, ClientMsg{config.MinerID + " says hello ", config.MinerID})
 			}
+		} else if strings.Contains(text, "queue") == true {
+			printRecordQueue()
+		} else if strings.Contains(text, "pop") == true {
+			popRecordQueue()
 		}
 	}
 }
