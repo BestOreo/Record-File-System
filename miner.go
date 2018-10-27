@@ -193,6 +193,10 @@ func getTime() string {
 	return time.Now().Format("2006-01-02 15:04:05")
 }
 
+func makeTimestamp() int {
+	return int(time.Now().UnixNano() % 1e6 / 1e3)
+}
+
 // just a demo
 func (t *MinerHandle) MinerTalk(args *ClientMsg, reply *int) error {
 	*reply = 0
@@ -232,7 +236,7 @@ func (t *MinerHandle) FloodOperation(record *OpMsg, reply *int) error {
 	if checkOperationInQueue(record) == false {
 		printColorFont("green", "pushed into recordQueue")
 		pushRecordQueue(record)
-		minerChain.createTransaction(record.Op, record.Name, record.MinerID)
+		minerChain.createTransaction(record.Op, record.Name, record.Content, record.MinerID)
 		broadcastOperations(*record)
 	}
 	return nil
@@ -242,7 +246,7 @@ func (t *MinerHandle) FloodOperation(record *OpMsg, reply *int) error {
 func (t *MinerHandle) FloodBlock(block *Block, reply *int) error {
 	*reply = 0
 	println("------------")
-	println("| Msg: ", block.PrevHash, block.Nonce)
+	println("| HASHMsg: ", block.PrevHash, block.Nonce)
 	println("------------")
 	if checkBlockInQueue(block) == false {
 		printColorFont("green", "pushed into blockQueue")
@@ -286,7 +290,7 @@ func sendMiner(remoteIPPort string, args ClientMsg) {
 		log.Fatal("tcp error:", err)
 	}
 	if reply == 0 {
-		fmt.Printf("%s: send to %s successfully\n", getTime(), remoteIPPort)
+		fmt.Printf("*** send %v to %s successfully\n", args, remoteIPPort)
 	}
 }
 
@@ -305,7 +309,7 @@ func broadcastOperations(operationMsg OpMsg) {
 			continue
 		}
 		if reply == 0 {
-			fmt.Printf("%s: send to %s successfully\n", getTime(), ip)
+			fmt.Printf("%%% send %v to %s successfully\n", operationMsg, ip)
 		}
 	}
 }
@@ -325,7 +329,7 @@ func broadcastBlocks(block Block) {
 			continue
 		}
 		if reply == 0 {
-			fmt.Printf("%s: send to %s successfully\n", getTime(), ip)
+			fmt.Printf("--- send %v to %s successfully\n", block, ip)
 		}
 	}
 }
@@ -377,7 +381,7 @@ func listenClient() {
 						fmt.Println("-----------------")
 						fmt.Println(msgjson)
 						fmt.Println("-----------------")
-						minerChain.createTransaction(msgjson["op"], msgjson["name"], msgjson["Content"])
+						minerChain.createTransaction(msgjson["op"], msgjson["name"], msgjson["Content"], config.MinerID)
 						// codes about blockchain
 						conn.Write([]byte("success"))
 						operationMsg := generateOpMsg(msgjson["op"], msgjson["name"], msgjson["Content"])
@@ -448,6 +452,8 @@ type Tx struct {
 // Block is a single structure in the chain
 type Block struct {
 	PrevHash     string
+	Index        int
+	Timestamp    int
 	Nonce        uint32
 	Transactions []*Tx
 }
@@ -512,6 +518,8 @@ func (bc *BlockChain) createBlock() {
 	block := &Block{}
 	block.PrevHash = bc.hashBlock(bc.chain[len(bc.chain)-1])
 	block.Transactions = bc.txBuffer
+	block.Timestamp = makeTimestamp()
+	block.Index = len(bc.chain)
 	println("%%%%%%%%%%%%%%5")
 	for _, v := range block.Transactions {
 		fmt.Printf("%v\n", v)
@@ -551,9 +559,10 @@ func (bc *BlockChain) hashBlock(block *Block) (str string) {
 	str = hex.EncodeToString(hash.Sum(nil))
 	return str
 }
-func (bc *BlockChain) createTransaction(OpType string, fileName string, content string) {
+
+func (bc *BlockChain) createTransaction(OpType string, fileName string, content string, MinerID string) {
 	bc.chainLock.Lock()
-	tx := &Tx{OpType, fileName, content, config.MinerID}
+	tx := &Tx{OpType, fileName, content, MinerID}
 	bc.txBuffer = append(bc.txBuffer, tx)
 	bc.chainLock.Unlock()
 	if len(bc.txBuffer) == TX_BUFFER_SIZE {
@@ -572,13 +581,13 @@ func (bc *BlockChain) getBlockBytes(block *Block) []byte {
 	// if err != nil {
 	// 	panic("time failed")
 	// }
-	NonceStr := fmt.Sprint(block.Nonce)
 	data := bytes.Join(
 		[][]byte{
 			[]byte(block.PrevHash),
+			[]byte(fmt.Sprint(strconv.Itoa(block.Index))),
+			[]byte(fmt.Sprint(strconv.Itoa(block.Timestamp))),
 			[]byte(txString),
-			// timeBytes,
-			[]byte(NonceStr),
+			[]byte(fmt.Sprint(block.Nonce)),
 		},
 		[]byte{},
 	)
@@ -651,7 +660,7 @@ func main() {
 				println("The queue is empty")
 			}
 		} else if strings.Contains(text, "floodblock") == true {
-			broadcastBlocks(Block{"Hello", 65535, nil})
+			broadcastBlocks(Block{"Hello", 0, 0, 65535, nil})
 		}
 	}
 }
