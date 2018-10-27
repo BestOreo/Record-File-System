@@ -525,7 +525,11 @@ func (bc *BlockChain) createBlock() {
 		fmt.Printf("%v\n", v)
 	}
 	println("%%%%%%%%%%%%%%5")
-	bc.txBuffer = make([]*Tx, 0)
+	if len(bc.txBuffer) > 2 {
+		bc.txBuffer = bc.txBuffer[2:]
+	} else {
+		bc.txBuffer = make([]*Tx, 0)
+	}
 	// mine the block to find solution
 	block.Nonce = bc.proofOfWork(block)
 	bc.addBlockToChain(block)
