@@ -230,9 +230,9 @@ func checkBlockInQueue(block *Block) bool {
 // FloodOperation : flood operation of client to the whole network
 func (t *MinerHandle) FloodOperation(record *OpMsg, reply *int) error {
 	*reply = 0
-	println("------------")
-	println("| Msg: ", record.MinerID, record.MsgID, record.Op, record.Name, record.Content)
-	println("------------")
+	// println("------------")
+	// println("| Msg: ", record.MinerID, record.MsgID, record.Op, record.Name, record.Content)
+	// println("------------")
 	if checkOperationInQueue(record) == false {
 		printColorFont("green", "pushed into recordQueue")
 		pushRecordQueue(record)
@@ -246,13 +246,17 @@ func (t *MinerHandle) FloodOperation(record *OpMsg, reply *int) error {
 func (t *MinerHandle) FloodBlock(block *Block, reply *int) error {
 	*reply = 0
 	println("------------")
-	println("| HASHMsg: ", block.PrevHash, block.Nonce)
+	println("| HASHMsg: ")
+	fmt.Printf("%v\n", block)
+	for _, tx := range block.Transactions {
+		fmt.Printf("%v\n", tx)
+	}
 	println("------------")
 	if checkBlockInQueue(block) == false {
 		printColorFont("green", "pushed into blockQueue")
 		pushBlockQueue(block)
 		minerChain.addBlockToChain(block)
-		broadcastBlocks(*block)
+		broadcastBlocks(block)
 	}
 	return nil
 }
@@ -315,7 +319,13 @@ func broadcastOperations(operationMsg OpMsg) {
 }
 
 // broadcastBlocks broadcast blcok to whole network
-func broadcastBlocks(block Block) {
+func broadcastBlocks(block *Block) {
+	fmt.Println("BROADCAST ----")
+	fmt.Printf("%v\n", block)
+	for _, tx := range block.Transactions {
+		fmt.Printf("%v\n", tx)
+	}
+	fmt.Println("END BROADCAST----")
 	for _, ip := range config.PeerMinersAddrs {
 		client, err := rpc.DialHTTP("tcp", ip)
 		if err != nil {
@@ -455,14 +465,14 @@ type Block struct {
 	Index        int
 	Timestamp    int
 	Nonce        uint32
-	Transactions []*Tx
+	Transactions []Tx
 }
 
 // BlockChain is the central datastructure
 type BlockChain struct {
 	chainLock    *sync.Mutex
 	chain        []*Block
-	txBuffer     []*Tx
+	txBuffer     []Tx
 	txBufferSize int
 	difficulty   int
 }
@@ -493,6 +503,9 @@ func (bc *BlockChain) verifyBlock(block *Block) (isValidBlock bool) {
 	// hashing should produce correct number of zeros
 	hasCorrectHash := strings.HasSuffix(blockHash, numberOfZeros)
 	if !hasCorrectHash {
+		fmt.Println("---")
+		fmt.Println(blockHash)
+		fmt.Println(block.Nonce)
 		fmt.Println("incorrect hash")
 	}
 	// validate all the transactions
@@ -528,12 +541,12 @@ func (bc *BlockChain) createBlock() {
 	if len(bc.txBuffer) > 2 {
 		bc.txBuffer = bc.txBuffer[2:]
 	} else {
-		bc.txBuffer = make([]*Tx, 0)
+		bc.txBuffer = make([]Tx, 0)
 	}
 	// mine the block to find solution
 	block.Nonce = bc.proofOfWork(block)
 	bc.addBlockToChain(block)
-	broadcastBlocks(*block)
+	broadcastBlocks(block)
 }
 
 func (bc *BlockChain) proofOfWork(block *Block) (Nonce uint32) {
@@ -566,7 +579,7 @@ func (bc *BlockChain) hashBlock(block *Block) (str string) {
 
 func (bc *BlockChain) createTransaction(OpType string, fileName string, content string, MinerID string) {
 	bc.chainLock.Lock()
-	tx := &Tx{OpType, fileName, content, MinerID}
+	tx := Tx{OpType, fileName, content, MinerID}
 	bc.txBuffer = append(bc.txBuffer, tx)
 	bc.chainLock.Unlock()
 	if len(bc.txBuffer) == TX_BUFFER_SIZE {
@@ -578,7 +591,7 @@ func (bc *BlockChain) getBlockBytes(block *Block) []byte {
 	txString := ""
 
 	for _, tx := range block.Transactions {
-		txString = tx.OpType + tx.filename + tx.content + tx.MinerID
+		txString = tx.OpType + tx.MinerID
 	}
 
 	// timeBytes, err := time.Now().MarshalJSON()
@@ -616,6 +629,7 @@ func (bc *BlockChain) findFile(fileName string) (blockTxMap map[string][]int) {
 		}
 	}
 	fmt.Println("map:", blockTxMap)
+	return blockTxMap
 }
 func (bc *BlockChain) findFiles(fileName string) {
 	blockTxMap := make(map[string][]int)
@@ -641,7 +655,6 @@ func (bc *BlockChain) printChain() {
 		idx++
 		if idx == 2 {
 			bc.findFile("text4.txt")
-			return
 		}
 		fmt.Println("CURRENT CHAIN : ---------------------------")
 		fmt.Println(now)
@@ -665,7 +678,7 @@ func Initial() {
 	minerChain = &BlockChain{
 		chainLock:    &sync.Mutex{},
 		chain:        make([]*Block, 0),
-		txBuffer:     make([]*Tx, 0),
+		txBuffer:     make([]Tx, 0),
 		txBufferSize: 10,
 		difficulty:   5,
 	}
@@ -707,7 +720,7 @@ func main() {
 				println("The queue is empty")
 			}
 		} else if strings.Contains(text, "floodblock") == true {
-			broadcastBlocks(Block{"Hello", 0, 0, 65535, nil})
+			broadcastBlocks(&Block{"Hello", 0, 0, 65535, nil})
 		}
 	}
 }
