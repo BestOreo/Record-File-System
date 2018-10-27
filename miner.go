@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/md5"
 	"encoding/hex"
@@ -459,7 +460,7 @@ func (bc *BlockChain) init() {
 	block := &Block{}
 	block.PrevHash = ""
 	block.Nonce = 0
-	bc.addBlockToChain(block)
+	bc.chain = append(bc.chain, block)
 	fmt.Println("Genisis block created.")
 	go minerChain.printChain()
 }
@@ -472,17 +473,23 @@ func (bc *BlockChain) verifyBlock(block *Block) (isValidBlock bool) {
 	lastBlockHash := bc.hashBlock(lastBlock)
 	// should point to last block hash
 	hasCorrectPrevHash := block.PrevHash == lastBlockHash
+	if !hasCorrectPrevHash {
+		fmt.Println("incorrect prev hash")
+	}
 	// hashing should produce correct number of zeros
 	hasCorrectHash := strings.HasSuffix(blockHash, numberOfZeros)
+	if !hasCorrectHash {
+		fmt.Println("incorrect hash")
+	}
 	// validate all the transactions
 	hasCorrectTxns := true
-	isValidBlock = hasCorrectHash && hasCorrectTxns && hasCorrectHash
+	isValidBlock = hasCorrectHash && hasCorrectTxns && hasCorrectPrevHash
 	return isValidBlock
 }
 func (bc *BlockChain) addBlockToChain(block *Block) {
 	// add it to the chain
 	bc.chainLock.Lock()
-	if verifyBlock(block) {
+	if bc.verifyBlock(block) {
 		bc.chain = append(bc.chain, block)
 	} else {
 		fmt.Println("Block not verified.")
@@ -501,13 +508,16 @@ func (bc *BlockChain) createBlock() {
 	// mine the block to find solution
 	block.Nonce = bc.proofOfWork(block)
 	bc.addBlockToChain(block)
+	broadcastBlocks(*block)
 	bc.txBuffer = make([]*Tx, 0)
+
 }
 func (bc *BlockChain) proofOfWork(block *Block) (Nonce uint32) {
 	Nonce = block.Nonce
 	str := bc.hashBlock(block)
 	for {
-		foundSolution := strings.HasSuffix(str, "00")
+		numberOfZeros := strings.Repeat("0", bc.difficulty)
+		foundSolution := strings.HasSuffix(str, numberOfZeros)
 		if foundSolution {
 			break
 		}
@@ -515,7 +525,10 @@ func (bc *BlockChain) proofOfWork(block *Block) (Nonce uint32) {
 		block.Nonce = Nonce
 		str = bc.hashBlock(block)
 	}
+	fmt.Println("Found Solution: (prevhash/currhash/nonce) ")
+	fmt.Println(block.PrevHash)
 	fmt.Println(str)
+	fmt.Println(Nonce)
 	return Nonce
 }
 
@@ -600,47 +613,47 @@ func Initial() {
 		chain:        make([]*Block, 0),
 		txBuffer:     make([]*Tx, 0),
 		txBufferSize: 10,
-		difficulty:   2,
+		difficulty:   5,
 	}
 	minerChain.init()
 }
 
 /*** END Blockchain ***/
 
-// func main() {
-// 	if len(os.Args) != 2 {
-// 		println("go run miner.go [settings]")
-// 		return
-// 	}
-// 	readConfig(os.Args[1]) // read the config.json into var config configSetting
-// 	fmt.Printf("MinerID:%s\nclientPort:%s\nPeerMinersAddrs:%v\nIncomingMinersAddr:%s\n", config.MinerID, config.IncomingClientsAddr, config.PeerMinersAddrs, config.IncomingMinersAddr)
-// 	Initial()
+func main() {
+	if len(os.Args) != 2 {
+		println("go run miner.go [settings]")
+		return
+	}
+	readConfig(os.Args[1]) // read the config.json into var config configSetting
+	fmt.Printf("MinerID:%s\nclientPort:%s\nPeerMinersAddrs:%v\nIncomingMinersAddr:%s\n", config.MinerID, config.IncomingClientsAddr, config.PeerMinersAddrs, config.IncomingMinersAddr)
+	Initial()
 
-// 	go listenMiner()  // Open a port to listen msg from miners
-// 	go listenClient() // Open a port to listen msg from clients
+	go listenMiner()  // Open a port to listen msg from miners
+	go listenClient() // Open a port to listen msg from clients
 
-// 	// command line control
-// 	reader := bufio.NewReader(os.Stdin)
-// 	for {
-// 		text, _ := reader.ReadString('\n')
-// 		if text == "showfiles\n" {
-// 			showfiles()
-// 		} else if strings.Contains(text, "rpcdemo") == true {
-// 			// demo : inform neiboring peers
-// 			for _, ip := range config.PeerMinersAddrs {
-// 				sendMiner(ip, ClientMsg{config.MinerID + " says hello ", config.MinerID})
-// 			}
-// 		} else if strings.Contains(text, "rqueue") == true {
-// 			printRecordQueue()
-// 		} else if strings.Contains(text, "bqueue") == true {
-// 			printBlockQueue()
-// 		} else if strings.Contains(text, "pop") == true {
-// 			rec := popRecordQueue()
-// 			if rec == nil {
-// 				println("The queue is empty")
-// 			}
-// 		} else if strings.Contains(text, "floodblock") == true {
-// 			broadcastBlocks(Block{"Hello", 65535, nil})
-// 		}
-// 	}
-// }
+	// command line control
+	reader := bufio.NewReader(os.Stdin)
+	for {
+		text, _ := reader.ReadString('\n')
+		if text == "showfiles\n" {
+			showfiles()
+		} else if strings.Contains(text, "rpcdemo") == true {
+			// demo : inform neiboring peers
+			for _, ip := range config.PeerMinersAddrs {
+				sendMiner(ip, ClientMsg{config.MinerID + " says hello ", config.MinerID})
+			}
+		} else if strings.Contains(text, "rqueue") == true {
+			printRecordQueue()
+		} else if strings.Contains(text, "bqueue") == true {
+			printBlockQueue()
+		} else if strings.Contains(text, "pop") == true {
+			rec := popRecordQueue()
+			if rec == nil {
+				println("The queue is empty")
+			}
+		} else if strings.Contains(text, "floodblock") == true {
+			broadcastBlocks(Block{"Hello", 65535, nil})
+		}
+	}
+}
