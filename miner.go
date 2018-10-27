@@ -525,8 +525,8 @@ func (bc *BlockChain) createBlock() {
 		fmt.Printf("%v\n", v)
 	}
 	println("%%%%%%%%%%%%%%5")
-	if len(bc.txBuffer) > 2 {
-		bc.txBuffer = bc.txBuffer[2:]
+	if len(bc.txBuffer) > TX_BUFFER_SIZE {
+		bc.txBuffer = bc.txBuffer[TX_BUFFER_SIZE:]
 	} else {
 		bc.txBuffer = make([]*Tx, 0)
 	}
