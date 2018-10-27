@@ -507,13 +507,11 @@ func (bc *BlockChain) createBlock() {
 	block := &Block{}
 	block.PrevHash = bc.hashBlock(bc.chain[len(bc.chain)-1])
 	block.Transactions = bc.txBuffer
-
+	bc.txBuffer = make([]*Tx, 0)
 	// mine the block to find solution
 	block.Nonce = bc.proofOfWork(block)
 	bc.addBlockToChain(block)
 	broadcastBlocks(*block)
-	bc.txBuffer = make([]*Tx, 0)
-
 }
 func (bc *BlockChain) proofOfWork(block *Block) (Nonce uint32) {
 	Nonce = block.Nonce
