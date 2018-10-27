@@ -232,6 +232,7 @@ func (t *MinerHandle) FloodOperation(record *OpMsg, reply *int) error {
 	if checkOperationInQueue(record) == false {
 		printColorFont("green", "pushed into recordQueue")
 		pushRecordQueue(record)
+		minerChain.createTransaction(record.Op, record.Name, record.MinerID)
 		broadcastOperations(*record)
 	}
 	return nil
