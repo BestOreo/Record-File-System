@@ -8,7 +8,7 @@
     "PowPerNoOpBlock": 4,
     "ConfirmsPerFileCreate": 2,
     "ConfirmsPerFileAppend": 4,
-    "MinerID": "M3",
+    "MinerID": "Miner3",
     "PeerMinersAddrs": ["127.0.0.1:5051", "127.0.0.1:9091"],
     "IncomingMinersAddr": "127.0.0.1:6061",
     "OutgoingMinersIP": "127.0.0.1",
