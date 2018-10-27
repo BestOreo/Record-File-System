@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"crypto/md5"
 	"encoding/hex"
@@ -430,7 +429,7 @@ func listenClient() {
 /*** Blockchain ***/
 
 // TX_BUFFER_SIZE is the maximum number of tx's from clients before a new block is created
-var TX_BUFFER_SIZE = 1
+var TX_BUFFER_SIZE = 4
 
 // Tx represents a single transaction from a client
 type Tx struct {
@@ -462,12 +461,32 @@ func (bc *BlockChain) init() {
 	block.Nonce = 0
 	bc.addBlockToChain(block)
 	fmt.Println("Genisis block created.")
+	go minerChain.printChain()
 }
 
+// This function should only occur when the chain is locked.
+func (bc *BlockChain) verifyBlock(block *Block) (isValidBlock bool) {
+	numberOfZeros := strings.Repeat("0", bc.difficulty)
+	blockHash := bc.hashBlock(block)
+	lastBlock := bc.chain[len(bc.chain)-1]
+	lastBlockHash := bc.hashBlock(lastBlock)
+	// should point to last block hash
+	hasCorrectPrevHash := block.PrevHash == lastBlockHash
+	// hashing should produce correct number of zeros
+	hasCorrectHash := strings.HasSuffix(blockHash, numberOfZeros)
+	// validate all the transactions
+	hasCorrectTxns := true
+	isValidBlock = hasCorrectHash && hasCorrectTxns && hasCorrectHash
+	return isValidBlock
+}
 func (bc *BlockChain) addBlockToChain(block *Block) {
 	// add it to the chain
 	bc.chainLock.Lock()
-	bc.chain = append(bc.chain, block)
+	if verifyBlock(block) {
+		bc.chain = append(bc.chain, block)
+	} else {
+		fmt.Println("Block not verified.")
+	}
 	bc.chainLock.Unlock()
 
 	fmt.Println("Block Added")
@@ -483,7 +502,6 @@ func (bc *BlockChain) createBlock() {
 	block.Nonce = bc.proofOfWork(block)
 	bc.addBlockToChain(block)
 	bc.txBuffer = make([]*Tx, 0)
-	bc.printChain()
 }
 func (bc *BlockChain) proofOfWork(block *Block) (Nonce uint32) {
 	Nonce = block.Nonce
@@ -511,7 +529,7 @@ func (bc *BlockChain) hashBlock(block *Block) (str string) {
 func (bc *BlockChain) createTransaction(OpType string, fileName string, MinerID string) {
 	currBuff := len(bc.txBuffer)
 	fmt.Println(currBuff)
-	if currBuff <= TX_BUFFER_SIZE {
+	if currBuff < TX_BUFFER_SIZE {
 		bc.chainLock.Lock()
 		tx := &Tx{
 			OpType,
@@ -548,24 +566,28 @@ func (bc *BlockChain) getBlockBytes(block *Block) []byte {
 }
 
 func (bc *BlockChain) printChain() {
-	for idx, block := range bc.chain {
-		fmt.Println("****************************")
-		fmt.Println("Block Number: ")
-		fmt.Println(idx)
-		fmt.Println("Prev Hash: ")
-		fmt.Println(block.PrevHash)
-		fmt.Println("Transactions: ")
-		for _, tx := range block.Transactions {
-			fmt.Println(".............")
-			fmt.Println("OP Type: ")
-			fmt.Println(tx.OpType)
-			fmt.Println("Content: ")
-			fmt.Println(tx.Content)
-			fmt.Println("MinerID: ")
-			fmt.Println(tx.MinerID)
-			fmt.Println(".............")
+	for now := range time.Tick(5 * time.Second) {
+		fmt.Println("CURRENT CHAIN : ---------------------------")
+		fmt.Println(now)
+		for idx, block := range bc.chain {
+			fmt.Println("****************************")
+			fmt.Println("Block Number: ")
+			fmt.Println(idx)
+			fmt.Println("Prev Hash: ")
+			fmt.Println(block.PrevHash)
+			fmt.Println("Transactions: ")
+			for _, tx := range block.Transactions {
+				fmt.Println(".............")
+				fmt.Println("OP Type: ")
+				fmt.Println(tx.OpType)
+				fmt.Println("Content: ")
+				fmt.Println(tx.Content)
+				fmt.Println("MinerID: ")
+				fmt.Println(tx.MinerID)
+				fmt.Println(".............")
+			}
+			fmt.Println("****************************")
 		}
-		fmt.Println("****************************")
 	}
 }
 
@@ -585,40 +607,40 @@ func Initial() {
 
 /*** END Blockchain ***/
 
-func main() {
-	if len(os.Args) != 2 {
-		println("go run miner.go [settings]")
-		return
-	}
-	readConfig(os.Args[1]) // read the config.json into var config configSetting
-	fmt.Printf("MinerID:%s\nclientPort:%s\nPeerMinersAddrs:%v\nIncomingMinersAddr:%s\n", config.MinerID, config.IncomingClientsAddr, config.PeerMinersAddrs, config.IncomingMinersAddr)
-	Initial()
+// func main() {
+// 	if len(os.Args) != 2 {
+// 		println("go run miner.go [settings]")
+// 		return
+// 	}
+// 	readConfig(os.Args[1]) // read the config.json into var config configSetting
+// 	fmt.Printf("MinerID:%s\nclientPort:%s\nPeerMinersAddrs:%v\nIncomingMinersAddr:%s\n", config.MinerID, config.IncomingClientsAddr, config.PeerMinersAddrs, config.IncomingMinersAddr)
+// 	Initial()
 
-	go listenMiner()  // Open a port to listen msg from miners
-	go listenClient() // Open a port to listen msg from clients
+// 	go listenMiner()  // Open a port to listen msg from miners
+// 	go listenClient() // Open a port to listen msg from clients
 
-	// command line control
-	reader := bufio.NewReader(os.Stdin)
-	for {
-		text, _ := reader.ReadString('\n')
-		if text == "showfiles\n" {
-			showfiles()
-		} else if strings.Contains(text, "rpcdemo") == true {
-			// demo : inform neiboring peers
-			for _, ip := range config.PeerMinersAddrs {
-				sendMiner(ip, ClientMsg{config.MinerID + " says hello ", config.MinerID})
-			}
-		} else if strings.Contains(text, "rqueue") == true {
-			printRecordQueue()
-		} else if strings.Contains(text, "bqueue") == true {
-			printBlockQueue()
-		} else if strings.Contains(text, "pop") == true {
-			rec := popRecordQueue()
-			if rec == nil {
-				println("The queue is empty")
-			}
-		} else if strings.Contains(text, "floodblock") == true {
-			broadcastBlocks(Block{"Hello", 65535, nil})
-		}
-	}
-}
+// 	// command line control
+// 	reader := bufio.NewReader(os.Stdin)
+// 	for {
+// 		text, _ := reader.ReadString('\n')
+// 		if text == "showfiles\n" {
+// 			showfiles()
+// 		} else if strings.Contains(text, "rpcdemo") == true {
+// 			// demo : inform neiboring peers
+// 			for _, ip := range config.PeerMinersAddrs {
+// 				sendMiner(ip, ClientMsg{config.MinerID + " says hello ", config.MinerID})
+// 			}
+// 		} else if strings.Contains(text, "rqueue") == true {
+// 			printRecordQueue()
+// 		} else if strings.Contains(text, "bqueue") == true {
+// 			printBlockQueue()
+// 		} else if strings.Contains(text, "pop") == true {
+// 			rec := popRecordQueue()
+// 			if rec == nil {
+// 				println("The queue is empty")
+// 			}
+// 		} else if strings.Contains(text, "floodblock") == true {
+// 			broadcastBlocks(Block{"Hello", 65535, nil})
+// 		}
+// 	}
+// }
