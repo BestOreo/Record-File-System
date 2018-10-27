@@ -247,6 +247,7 @@ func (t *MinerHandle) FloodBlock(block *Block, reply *int) error {
 	if checkBlockInQueue(block) == false {
 		printColorFont("green", "pushed into blockQueue")
 		pushBlockQueue(block)
+		minerChain.addBlockToChain(block)
 		broadcastBlocks(*block)
 	}
 	return nil
@@ -430,7 +431,7 @@ func listenClient() {
 /*** Blockchain ***/
 
 // TX_BUFFER_SIZE is the maximum number of tx's from clients before a new block is created
-var TX_BUFFER_SIZE = 4
+var TX_BUFFER_SIZE = 2
 
 // Tx represents a single transaction from a client
 type Tx struct {
@@ -475,6 +476,8 @@ func (bc *BlockChain) verifyBlock(block *Block) (isValidBlock bool) {
 	hasCorrectPrevHash := block.PrevHash == lastBlockHash
 	if !hasCorrectPrevHash {
 		fmt.Println("incorrect prev hash")
+		fmt.Println(block.PrevHash)
+		fmt.Println(lastBlockHash)
 	}
 	// hashing should produce correct number of zeros
 	hasCorrectHash := strings.HasSuffix(blockHash, numberOfZeros)
