@@ -585,8 +585,51 @@ func (bc *BlockChain) getBlockBytes(block *Block) []byte {
 	return data
 }
 
+// maps blockprevhash -> index of content in the block that have the filename
+func (bc *BlockChain) findFile(fileName string) (blockTxMap map[string][]int) {
+	blockTxMap = make(map[string][]int)
+	for _, block := range bc.chain {
+		for txID, tx := range block.Transactions {
+			hasBlock := false
+			if tx.filename == fileName {
+				if !hasBlock {
+					blockTxMap[block.PrevHash] = make([]int, 0)
+					hasBlock = true
+				}
+				blockTxMap[block.PrevHash] = append(blockTxMap[block.PrevHash], txID)
+				fmt.Println(block.PrevHash)
+				fmt.Println(tx.filename)
+			}
+		}
+	}
+	fmt.Println("map:", blockTxMap)
+}
+func (bc *BlockChain) findFiles(fileName string) {
+	blockTxMap := make(map[string][]int)
+	for _, block := range bc.chain {
+		for txID, tx := range block.Transactions {
+			hasBlock := false
+			if tx.filename == fileName {
+				if !hasBlock {
+					blockTxMap[block.PrevHash] = make([]int, 0)
+					hasBlock = true
+				}
+				blockTxMap[block.PrevHash] = append(blockTxMap[block.PrevHash], txID)
+				fmt.Println(block.PrevHash)
+				fmt.Println(tx.filename)
+			}
+		}
+	}
+	fmt.Println("map:", blockTxMap)
+}
 func (bc *BlockChain) printChain() {
+	idx := 0
 	for now := range time.Tick(10 * time.Second) {
+		idx++
+		if idx == 2 {
+			bc.findFile("text4.txt")
+			return
+		}
 		fmt.Println("CURRENT CHAIN : ---------------------------")
 		fmt.Println(now)
 		for idx, block := range bc.chain {
