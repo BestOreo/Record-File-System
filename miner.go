@@ -295,12 +295,14 @@ func broadcastOperations(operationMsg OpMsg) {
 	for _, ip := range config.PeerMinersAddrs {
 		client, err := rpc.DialHTTP("tcp", ip)
 		if err != nil {
-			log.Fatal("dialing:", err)
+			println("dialing:", err)
+			continue
 		}
 		var reply int
 		err = client.Call("MinerHandle.FloodOperation", operationMsg, &reply)
 		if err != nil {
-			log.Fatal("tcp error:", err)
+			println("tcp error:", err)
+			continue
 		}
 		if reply == 0 {
 			fmt.Printf("%s: send to %s successfully\n", getTime(), ip)
@@ -313,12 +315,14 @@ func broadcastBlocks(block Block) {
 	for _, ip := range config.PeerMinersAddrs {
 		client, err := rpc.DialHTTP("tcp", ip)
 		if err != nil {
-			log.Fatal("dialing:", err)
+			println("dialing:", err)
+			continue
 		}
 		var reply int
 		err = client.Call("MinerHandle.FloodBlock", block, &reply)
 		if err != nil {
-			log.Fatal("tcp error:", err)
+			println("tcp error:", err)
+			continue
 		}
 		if reply == 0 {
 			fmt.Printf("%s: send to %s successfully\n", getTime(), ip)
@@ -435,9 +439,10 @@ var TX_BUFFER_SIZE = 2
 
 // Tx represents a single transaction from a client
 type Tx struct {
-	OpType  string
-	Content string
-	MinerID string
+	OpType   string
+	filename string
+	content  string
+	MinerID  string
 }
 
 // Block is a single structure in the chain
@@ -507,12 +512,18 @@ func (bc *BlockChain) createBlock() {
 	block := &Block{}
 	block.PrevHash = bc.hashBlock(bc.chain[len(bc.chain)-1])
 	block.Transactions = bc.txBuffer
+	println("%%%%%%%%%%%%%%5")
+	for _, v := range block.Transactions {
+		fmt.Printf("%v\n", v)
+	}
+	println("%%%%%%%%%%%%%%5")
 	bc.txBuffer = make([]*Tx, 0)
 	// mine the block to find solution
 	block.Nonce = bc.proofOfWork(block)
 	bc.addBlockToChain(block)
 	broadcastBlocks(*block)
 }
+
 func (bc *BlockChain) proofOfWork(block *Block) (Nonce uint32) {
 	Nonce = block.Nonce
 	str := bc.hashBlock(block)
@@ -540,28 +551,23 @@ func (bc *BlockChain) hashBlock(block *Block) (str string) {
 	str = hex.EncodeToString(hash.Sum(nil))
 	return str
 }
-func (bc *BlockChain) createTransaction(OpType string, fileName string, MinerID string) {
-	currBuff := len(bc.txBuffer)
-	fmt.Println(currBuff)
-	if currBuff < TX_BUFFER_SIZE {
-		bc.chainLock.Lock()
-		tx := &Tx{
-			OpType,
-			fileName,
-			MinerID,
-		}
-		bc.txBuffer = append(bc.txBuffer, tx)
-		bc.chainLock.Unlock()
-	} else {
+func (bc *BlockChain) createTransaction(OpType string, fileName string, content string) {
+	bc.chainLock.Lock()
+	tx := &Tx{OpType, fileName, content, config.MinerID}
+	bc.txBuffer = append(bc.txBuffer, tx)
+	bc.chainLock.Unlock()
+	if len(bc.txBuffer) == TX_BUFFER_SIZE {
 		bc.createBlock()
 	}
 }
 
 func (bc *BlockChain) getBlockBytes(block *Block) []byte {
 	txString := ""
+
 	for _, tx := range block.Transactions {
-		txString = tx.Content + tx.OpType + tx.MinerID
+		txString = tx.OpType + tx.filename + tx.content + tx.MinerID
 	}
+
 	// timeBytes, err := time.Now().MarshalJSON()
 	// if err != nil {
 	// 	panic("time failed")
@@ -580,25 +586,16 @@ func (bc *BlockChain) getBlockBytes(block *Block) []byte {
 }
 
 func (bc *BlockChain) printChain() {
-	for now := range time.Tick(5 * time.Second) {
+	for now := range time.Tick(10 * time.Second) {
 		fmt.Println("CURRENT CHAIN : ---------------------------")
 		fmt.Println(now)
 		for idx, block := range bc.chain {
 			fmt.Println("****************************")
-			fmt.Println("Block Number: ")
-			fmt.Println(idx)
-			fmt.Println("Prev Hash: ")
-			fmt.Println(block.PrevHash)
+			fmt.Println("Block Number: ", idx)
+			fmt.Println("Prev Hash: ", block.PrevHash)
 			fmt.Println("Transactions: ")
 			for _, tx := range block.Transactions {
-				fmt.Println(".............")
-				fmt.Println("OP Type: ")
-				fmt.Println(tx.OpType)
-				fmt.Println("Content: ")
-				fmt.Println(tx.Content)
-				fmt.Println("MinerID: ")
-				fmt.Println(tx.MinerID)
-				fmt.Println(".............")
+				fmt.Printf("%v\n", tx)
 			}
 			fmt.Println("****************************")
 		}
