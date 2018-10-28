@@ -242,6 +242,7 @@ func printBlockQueue() {
 		println("Repeated: False")
 		println("pre-Hash:", block.PrevHash)
 		println("index", block.Index)
+		println("MinerID", block.Miner)
 		println("Transactions:")
 		jsons := convertJsonArray(block.Transactions)
 		for i := 0; i < len(jsons); i++ {
@@ -329,9 +330,9 @@ func (t *MinerHandle) FloodOperation(record *OpMsg, reply *int) error {
 	*reply = 0
 	if checkOperationInQueue(record) == false {
 		println("------------")
-		println("| Msg: ", record.MinerID, record.MsgID, record.Op, record.Name, record.Content)
+		println("| Record: ", record.MinerID, record.MsgID, record.Op, record.Name, record.Content)
+		printColorFont("green", "| pushed into recordQueue")
 		println("------------")
-		printColorFont("green", "pushed into recordQueue")
 		pushRecordQueue(record)
 		// minerChain.createTransaction(record.Op, record.Name, record.Content, record.MinerID)
 		broadcastOperations(*record)
@@ -342,13 +343,15 @@ func (t *MinerHandle) FloodOperation(record *OpMsg, reply *int) error {
 // FloodBlock : flood block to the whole network
 func (t *MinerHandle) FloodBlock(block *Block, reply *int) error {
 	*reply = 0
+	println(getTime())
 	printColorFont("purple", "*** Receive Block")
 
 	if checkBlockInQueue(block) == false {
 		println("------------")
 		println("Repeated: False")
 		println("pre-Hash:", block.PrevHash)
-		println("index", block.Index)
+		println("index:", block.Index)
+		println("MinerID:", block.Miner)
 		// println("tx", block.Transactions)
 		println("Transactions:")
 		if block.Transactions != "" {
@@ -357,15 +360,19 @@ func (t *MinerHandle) FloodBlock(block *Block, reply *int) error {
 				json := jsons[i]
 				fmt.Printf("%d\top:%s\tfilename:%s\tcontent:%s\n", i, json["op"], json["filename"], json["content"])
 			}
-			println("timestamp", block.Timestamp)
+			println("timestamp:", block.Timestamp)
+			println("------------")
+			println()
 			pushBlockQueue(block)
 			minerChain.addBlockToChain(block)
-			println("------------")
 			broadcastBlocks(block)
 		}
 	} else {
-		println("*** Repeated: True")
+		println("Repeated: True")
+		println("From", block.Miner)
+		printColorFont("purple", "***")
 	}
+	println()
 	return nil
 }
 
@@ -393,9 +400,11 @@ func broadcastOperations(operationMsg OpMsg) {
 
 // broadcastBlocks broadcast blcok to whole network
 func broadcastBlocks(block *Block) {
-	fmt.Println("BROADCAST ----")
-	fmt.Printf("%v\n", block)
-	fmt.Println("END BROADCAST----")
+	println(getTime())
+	fmt.Println("---------BROADCAST--------")
+	println("Index:", block.Index)
+	println("Transactions:", block.Transactions)
+	println("Timestamp:", block.Timestamp)
 	for _, ip := range config.PeerMinersAddrs {
 		client, err := rpc.DialHTTP("tcp", ip)
 		if err != nil {
@@ -409,9 +418,11 @@ func broadcastBlocks(block *Block) {
 			continue
 		}
 		if reply == 0 {
-			fmt.Printf("--- send %v to %s successfully\n", block, ip)
+			fmt.Printf("send block to %s successfully\n", ip)
 		}
 	}
+	fmt.Println("---------End BROADCAST--------")
+	println()
 }
 
 // thread to deal with incoming message from client
@@ -523,6 +534,7 @@ type Block struct {
 	Index        int   // the position in blockchain
 	Timestamp    int64 // nanoseconds elapsed since January 1, 1970 UTC.
 	Nonce        uint32
+	Miner        string
 	Transactions string
 }
 
@@ -542,7 +554,9 @@ func (bc *BlockChain) init() {
 	block.Nonce = 0
 	bc.chain = append(bc.chain, block)
 	fmt.Println("Genisis block created.")
-	bc.startBlockGeneration()
+
+	// bc.startBlockGeneration()
+
 	bc.manageChain()
 }
 
@@ -580,17 +594,16 @@ func (bc *BlockChain) verifyBlock(block *Block) (isValidBlock bool) {
 	// should point to last block hash
 	hasCorrectPrevHash := block.PrevHash == lastBlockHash
 	if !hasCorrectPrevHash {
-		fmt.Println("incorrect prev hash")
-		fmt.Println(block.PrevHash)
-		fmt.Println(lastBlockHash)
+		fmt.Println("Block.PrevHash:", block.PrevHash)
+		fmt.Println("Real PrevHash", lastBlockHash)
+		fmt.Println("Hint: Incorrect prev hash")
 	}
 	// hashing should produce correct number of zeros
 	hasCorrectHash := strings.HasSuffix(blockHash, numberOfZeros)
 	if !hasCorrectHash {
-		fmt.Println("---")
-		fmt.Println(blockHash)
-		fmt.Println(block.Nonce)
-		fmt.Println("incorrect hash")
+		fmt.Println("BlockHash:\t", blockHash)
+		fmt.Println("BlockNonce:\t", block.Nonce)
+		fmt.Println("Hint: Incorrect hash")
 	}
 	// validate all the transactions
 	transactions := convertJsonArray(block.Transactions)
@@ -601,23 +614,27 @@ func (bc *BlockChain) verifyBlock(block *Block) (isValidBlock bool) {
 			hasvalidTransactions = false
 		}
 	}
-	fmt.Println("verifying transactions")
 
 	hasCorrectTxns := true
 	isValidBlock = hasCorrectHash && hasCorrectTxns && hasCorrectPrevHash && hasvalidTransactions
 	return isValidBlock
 }
+
 func (bc *BlockChain) addBlockToChain(block *Block) {
 	// add it to the chain
 	bc.chainLock.Lock()
+	println(getTime())
+	println("----------verifyBlock----------")
 	if bc.verifyBlock(block) {
 		bc.chain = append(bc.chain, block)
+		fmt.Println("Result: Block Added")
 	} else {
-		fmt.Println("Block not verified.")
+		fmt.Println("Result: Block not verified.")
 	}
+	println("----------End verifyBlock----------")
+	println()
 	bc.chainLock.Unlock()
 
-	fmt.Println("Block Added")
 }
 
 // when timeout, you just use API createBlock
@@ -630,6 +647,7 @@ func (bc *BlockChain) createTransactionBlock() {
 	// block.Transactions = bc.txBuffer
 	block.Timestamp = makeTimestamp()
 	block.Index = len(bc.chain)
+	block.Miner = config.MinerID
 
 	var transactionNum int
 	// there are two cases
@@ -649,7 +667,14 @@ func (bc *BlockChain) createTransactionBlock() {
 	}
 	// mine the block to find solution
 	block.Nonce = bc.proofOfWork(block)
-	fmt.Printf("Block is %v\n", block)
+
+	println("*****************")
+	fmt.Printf("* Block Info\n")
+	println("*Index:", block.Index)
+	println("*Miner:", block.Miner)
+	println("*Transaction:", block.Transactions)
+	println("*Nonce:", block.Nonce)
+	println("*****************")
 
 	bc.addBlockToChain(block)
 	broadcastBlocks(block)
@@ -663,6 +688,7 @@ func (bc *BlockChain) createNoOpBlock() {
 	block.Timestamp = makeTimestamp()
 	block.Index = len(bc.chain)
 	block.Transactions = "No-Op" + "{,}" + "{,}" + "{,}" + config.MinerID
+	block.Miner = config.MinerID
 
 	// mine the block to find solution
 	block.Nonce = bc.proofOfWork(block)
@@ -673,6 +699,7 @@ func (bc *BlockChain) createNoOpBlock() {
 }
 
 func (bc *BlockChain) proofOfWork(block *Block) (Nonce uint32) {
+	println("-----------ProofOfWork-----------")
 	Nonce = block.Nonce
 	str := bc.hashBlock(block)
 	for {
@@ -686,9 +713,11 @@ func (bc *BlockChain) proofOfWork(block *Block) (Nonce uint32) {
 		str = bc.hashBlock(block)
 	}
 	fmt.Println("Found Solution: (prevhash/currhash/nonce) ")
-	fmt.Println(block.PrevHash)
-	fmt.Println(str)
-	fmt.Println(Nonce)
+	fmt.Println("PrevHash", block.PrevHash)
+	fmt.Println("currhash", str)
+	fmt.Println("Nonce:", Nonce)
+	println("-----------End ProofOfWork-----------")
+	println()
 	return Nonce
 }
 
@@ -788,7 +817,6 @@ func (bc *BlockChain) printChain() {
 		fmt.Println("****************************")
 		fmt.Println("Block Index: ", block.Index)
 		fmt.Println("Prev Hash: ", block.PrevHash)
-		fmt.Println("Transactions: ")
 		println("Transactions:")
 		if i != 0 && block.Transactions != "" {
 			jsons := convertJsonArray(block.Transactions)
@@ -798,8 +826,10 @@ func (bc *BlockChain) printChain() {
 			}
 		}
 		fmt.Println("Nonce: ", block.Nonce)
+		fmt.Println("MinerID: ", block.Miner)
 		fmt.Println("Timestamp: ", block.Timestamp)
 		fmt.Println("****************************")
+		println()
 	}
 }
 
@@ -858,7 +888,7 @@ func main() {
 				println("The queue is empty")
 			}
 		} else if strings.Contains(text, "floodblock") == true {
-			broadcastBlocks(&Block{"Hello", 0, 0, 65535, "A,B,C,D"})
+			broadcastBlocks(&Block{"Hello", 0, 0, 65535, "Miner", "A,B,C,D"})
 		} else if strings.Contains(text, "createblock") == true {
 			minerChain.createTransactionBlock()
 		} else if strings.Contains(text, "chain") == true {
