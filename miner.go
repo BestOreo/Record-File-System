@@ -288,7 +288,7 @@ func (t *MinerHandle) FloodOperation(record *OpMsg, reply *int) error {
 		println("------------")
 		printColorFont("green", "pushed into recordQueue")
 		pushRecordQueue(record)
-		// minerChain.createTransaction(record.Op, record.Name, record.Content, record.MinerID)
+		minerChain.createTransaction(record.Op, record.Name, record.Content, record.MinerID)
 		broadcastOperations(*record)
 	}
 	return nil
@@ -306,9 +306,9 @@ func (t *MinerHandle) FloodBlock(block *Block, reply *int) error {
 		println("index", block.Index)
 		println("tx", block.Transactions)
 		println("timestamp", block.Timestamp)
-		// pushBlockQueue(block)
-		// minerChain.addBlockToChain(block)
-		// broadcastBlocks(block)
+		pushBlockQueue(block)
+		minerChain.addBlockToChain(block)
+		broadcastBlocks(block)
 	} else {
 		println("Repeated: True")
 	}
@@ -409,7 +409,7 @@ func listenClient() {
 						fmt.Println("-----------------")
 						fmt.Println(msgjson)
 						fmt.Println("-----------------")
-						// minerChain.createTransaction(msgjson["op"], msgjson["name"], msgjson["Content"], config.MinerID)
+						minerChain.createTransaction(msgjson["op"], msgjson["name"], msgjson["Content"], config.MinerID)
 						// codes about blockchain
 						conn.Write([]byte("success"))
 						operationMsg := generateOpMsg(msgjson["op"], msgjson["name"], msgjson["Content"])
@@ -648,24 +648,44 @@ func (bc *BlockChain) getBlockBytes(block *Block) []byte {
 // 	return blockTxMap
 // }
 
-// func (bc *BlockChain) findFiles(fileName string) {
-// 	blockTxMap := make(map[string][]int)
-// 	for _, block := range bc.chain {
-// 		for txID, tx := range block.Transactions {
-// 			hasBlock := false
-// 			if tx.filename == fileName {
-// 				if !hasBlock {
-// 					blockTxMap[block.PrevHash] = make([]int, 0)
-// 					hasBlock = true
-// 				}
-// 				blockTxMap[block.PrevHash] = append(blockTxMap[block.PrevHash], txID)
-// 				fmt.Println(block.PrevHash)
-// 				fmt.Println(tx.filename)
-// 			}
-// 		}
-// 	}
-// 	fmt.Println("map:", blockTxMap)
-// }
+func (bc *BlockChain) getAllFileNames() (fileNames []string) {
+	fileNames = make([]string, 0)
+	for _, block := range bc.chain {
+		for _, tx := range block.Transactions {
+			if tx.OpType == "CreateFile" {
+				fileNames = append(fileNames, tx.filename)
+			}
+		}
+	}
+	return fileNames
+}
+
+func (bc *BlockChain) getNumRecords(fname string) (recordCount int) {
+	recordCount = 0
+	for _, block := range bc.chain {
+		for _, tx := range block.Transactions {
+			if tx.filename == fname {
+				recordCount++
+			}
+		}
+	}
+	return recordCount
+}
+
+func (bc *BlockChain) readRecord(fname string, recordNum int) (content string) {
+	recordCount = 0
+	for _, block := range bc.chain {
+		for _, tx := range block.Transactions {
+			if tx.filename == fname {
+				recordCount++
+			}
+			if recordCount == recordNum {
+				return tx.content
+			}
+		}
+	}
+	return "Not Found"
+}
 
 func (bc *BlockChain) printChain() {
 	idx := 0
@@ -680,10 +700,10 @@ func (bc *BlockChain) printChain() {
 			fmt.Println("****************************")
 			fmt.Println("Block Number: ", idx)
 			fmt.Println("Prev Hash: ", block.PrevHash)
-			// fmt.Println("Transactions: ")
-			// for _, tx := range block.Transactions {
-			// 	fmt.Printf("%v\n", tx)
-			// }
+			fmt.Println("Transactions: ")
+			for _, tx := range block.Transactions {
+				fmt.Printf("%v\n", tx)
+			}
 			fmt.Println("****************************")
 		}
 	}
@@ -717,7 +737,7 @@ func main() {
 
 	go listenMiner()  // Open a port to listen msg from miners
 	go listenClient() // Open a port to listen msg from clients
-	// go minerChain.printChain()
+	go minerChain.printChain()
 
 	// command line control
 	reader := bufio.NewReader(os.Stdin)
