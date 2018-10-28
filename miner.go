@@ -155,7 +155,9 @@ func popRecordQueue() *OpMsg {
 }
 
 func pushBlockQueue(block *Block) {
+	blockQueueMutex.Lock()
 	blockQueue = append(blockQueue, block)
+	blockQueueMutex.Unlock()
 }
 
 func popBlockQueue() *Block {
@@ -203,7 +205,18 @@ func printRecordQueue() {
 func printBlockQueue() {
 	println("---------------------------\nBlockQueue")
 	for i := 0; i < len(blockQueue); i++ {
-		println(blockQueue[i].PrevHash, blockQueue[i].Nonce)
+		println("***", i)
+		block := blockQueue[i]
+		println("Repeated: False")
+		println("pre-Hash:", block.PrevHash)
+		println("index", block.Index)
+		println("Transactions:")
+		jsons := convertJsonArray(block.Transactions)
+		for i := 0; i < len(jsons); i++ {
+			json := jsons[i]
+			fmt.Printf("%d\top:%s\tfilename:%s\tcontent:%s\n", i, json["op"], json["filename"], json["content"])
+		}
+		println("timestamp", block.Timestamp)
 	}
 	println("---------------------------")
 }
@@ -230,8 +243,8 @@ func getTime() string {
 	return time.Now().Format("2006-01-02 15:04:05")
 }
 
-func makeTimestamp() int {
-	return int(time.Now().UnixNano() % 1e6 / 1e3)
+func makeTimestamp() int64 {
+	return int64(time.Now().UnixNano())
 }
 
 // just a demo
@@ -294,25 +307,31 @@ func (t *MinerHandle) FloodOperation(record *OpMsg, reply *int) error {
 	return nil
 }
 
-// FloodOperation : flood block to the whole network
+// FloodBlock : flood block to the whole network
 func (t *MinerHandle) FloodBlock(block *Block, reply *int) error {
 	*reply = 0
-	println("------------")
-	printColorFont("purple", "Receive Block")
+	printColorFont("purple", "*** Receive Block")
 
 	if checkBlockInQueue(block) == false {
+		println("------------")
 		println("Repeated: False")
 		println("pre-Hash:", block.PrevHash)
 		println("index", block.Index)
-		println("tx", block.Transactions)
+		// println("tx", block.Transactions)
+		println("Transactions:")
+		jsons := convertJsonArray(block.Transactions)
+		for i := 0; i < len(jsons); i++ {
+			json := jsons[i]
+			fmt.Printf("%d\top:%s\tfilename:%s\tcontent:%s\n", i, json["op"], json["filename"], json["content"])
+		}
 		println("timestamp", block.Timestamp)
-		// pushBlockQueue(block)
-		// minerChain.addBlockToChain(block)
-		// broadcastBlocks(block)
+		pushBlockQueue(block)
+		minerChain.addBlockToChain(block)
+		println("------------")
+		broadcastBlocks(block)
 	} else {
-		println("Repeated: True")
+		println("*** Repeated: True")
 	}
-	println("------------")
 	return nil
 }
 
@@ -342,7 +361,6 @@ func broadcastOperations(operationMsg OpMsg) {
 func broadcastBlocks(block *Block) {
 	fmt.Println("BROADCAST ----")
 	fmt.Printf("%v\n", block)
-
 	fmt.Println("END BROADCAST----")
 	for _, ip := range config.PeerMinersAddrs {
 		client, err := rpc.DialHTTP("tcp", ip)
@@ -409,7 +427,6 @@ func listenClient() {
 						fmt.Println("-----------------")
 						fmt.Println(msgjson)
 						fmt.Println("-----------------")
-						// minerChain.createTransaction(msgjson["op"], msgjson["name"], msgjson["Content"], config.MinerID)
 						// codes about blockchain
 						conn.Write([]byte("success"))
 						operationMsg := generateOpMsg(msgjson["op"], msgjson["name"], msgjson["Content"])
@@ -466,22 +483,11 @@ func listenClient() {
 
 /*** Blockchain ***/
 
-// TX_BUFFER_SIZE is the maximum number of tx's from clients before a new block is created
-var TX_BUFFER_SIZE = 2
-
-// Tx represents a single transaction from a client
-type Tx struct {
-	OpType   string
-	filename string
-	content  string
-	MinerID  string
-}
-
 // Block is a single structure in the chain
 type Block struct {
 	PrevHash     string
-	Index        int
-	Timestamp    int
+	Index        int   // the position in blockchain
+	Timestamp    int64 // nanoseconds elapsed since January 1, 1970 UTC.
 	Nonce        uint32
 	Transactions string
 }
@@ -490,7 +496,6 @@ type Block struct {
 type BlockChain struct {
 	chainLock    *sync.Mutex
 	chain        []*Block
-	txBuffer     []Tx
 	maxRecordNum int
 	difficulty   int
 }
@@ -543,6 +548,9 @@ func (bc *BlockChain) addBlockToChain(block *Block) {
 	fmt.Println("Block Added")
 }
 
+// when timeout, you just use API createBlock
+// the function will read records from the queue
+// and generate a new block
 func (bc *BlockChain) createBlock() {
 	// set prev hash
 	block := &Block{}
@@ -552,11 +560,13 @@ func (bc *BlockChain) createBlock() {
 	block.Index = len(bc.chain)
 
 	var transactionNum int
+	// there are two cases
 	if len(recordQueue) > bc.maxRecordNum {
 		transactionNum = bc.maxRecordNum
 	} else {
 		transactionNum = len(recordQueue)
 	}
+
 	for i := 0; i < transactionNum; i++ {
 		record := popRecordQueue()
 		if len(block.Transactions) == 0 {
@@ -565,9 +575,7 @@ func (bc *BlockChain) createBlock() {
 			block.Transactions += "{;}" + record.Op + "{,}" + record.Name + "{,}" + record.Content + "{,}" + record.MinerID
 		}
 	}
-
 	// mine the block to find solution
-
 	block.Nonce = bc.proofOfWork(block)
 	fmt.Printf("Block is %v\n", block)
 
@@ -603,28 +611,32 @@ func (bc *BlockChain) hashBlock(block *Block) (str string) {
 	return str
 }
 
-func (bc *BlockChain) createTransaction(OpType string, fileName string, content string, MinerID string) {
-	bc.chainLock.Lock()
-	tx := Tx{OpType, fileName, content, MinerID}
-	bc.txBuffer = append(bc.txBuffer, tx)
-	bc.chainLock.Unlock()
-	if len(bc.txBuffer) == TX_BUFFER_SIZE {
-		bc.createBlock()
-	}
-}
-
 func (bc *BlockChain) getBlockBytes(block *Block) []byte {
 	data := bytes.Join(
 		[][]byte{
 			[]byte(block.PrevHash),
 			[]byte(fmt.Sprint(strconv.Itoa(block.Index))),
-			[]byte(fmt.Sprint(strconv.Itoa(block.Timestamp))),
+			[]byte(strconv.FormatInt(block.Timestamp, 10)),
 			[]byte(fmt.Sprint(block.Nonce)),
 			[]byte(block.Transactions),
 		},
 		[]byte{},
 	)
 	return data
+}
+
+func convertJsonArray(transaction string) []map[string]string {
+	res := make([]map[string]string, 0)
+	recordList := strings.Split(transaction, "{;}")
+	for _, record := range recordList {
+		elements := strings.Split(record, "{,}")
+		json := make(map[string]string)
+		json["op"] = elements[0]
+		json["filename"] = elements[1]
+		json["content"] = elements[2]
+		res = append(res, json)
+	}
+	return res
 }
 
 // maps blockprevhash -> index of content in the block that have the filename
@@ -668,24 +680,21 @@ func (bc *BlockChain) getBlockBytes(block *Block) []byte {
 // }
 
 func (bc *BlockChain) printChain() {
-	idx := 0
-	for now := range time.Tick(10 * time.Second) {
-		idx++
-		if idx == 2 {
-			// bc.findFile("text4.txt")
+	for i, block := range bc.chain {
+		fmt.Println("****************************")
+		fmt.Println("Block Index: ", block.Index)
+		fmt.Println("Prev Hash: ", block.PrevHash)
+		fmt.Println("Transactions: ")
+		println("Transactions:")
+		if i != 0 {
+			jsons := convertJsonArray(block.Transactions)
+			for i := 0; i < len(jsons); i++ {
+				json := jsons[i]
+				fmt.Printf("%d\top:%s\tfilename:%s\tcontent:%s\n", i, json["op"], json["filename"], json["content"])
+			}
 		}
-		fmt.Println("CURRENT CHAIN : ---------------------------")
-		fmt.Println(now)
-		for idx, block := range bc.chain {
-			fmt.Println("****************************")
-			fmt.Println("Block Number: ", idx)
-			fmt.Println("Prev Hash: ", block.PrevHash)
-			// fmt.Println("Transactions: ")
-			// for _, tx := range block.Transactions {
-			// 	fmt.Printf("%v\n", tx)
-			// }
-			fmt.Println("****************************")
-		}
+		fmt.Println("Nonce: ", block.Nonce)
+		fmt.Println("****************************")
 	}
 }
 
@@ -697,8 +706,7 @@ func Initial() {
 	minerChain = &BlockChain{
 		chainLock:    &sync.Mutex{},
 		chain:        make([]*Block, 0),
-		txBuffer:     make([]Tx, 0),
-		maxRecordNum: 2,
+		maxRecordNum: 2, // the maximum records in one block
 		difficulty:   5,
 	}
 	minerChain.init()
@@ -742,8 +750,14 @@ func main() {
 		} else if strings.Contains(text, "floodblock") == true {
 			broadcastBlocks(&Block{"Hello", 0, 0, 65535, "A,B,C,D"})
 		} else if strings.Contains(text, "createblock") == true {
-			println("i get it")
 			minerChain.createBlock()
+		} else if strings.Contains(text, "chain") == true {
+			minerChain.printChain()
+		} else if strings.Contains(text, "test") == true {
+			s := convertJsonArray("CreateFile{,}text.txt{,}{,}Mijnwerker{;}CreateFile{,}text2.txt{,}{,}Mijnwerker")
+			for _, v := range s {
+				println(v["op"], v["filename"], v["content"])
+			}
 		}
 	}
 }
