@@ -510,6 +510,7 @@ func (bc *BlockChain) init() {
 	bc.chain = append(bc.chain, block)
 	fmt.Println("Genisis block created.")
 	bc.startBlockGeneration()
+	bc.manageChain()
 }
 
 func (bc *BlockChain) startBlockGeneration() {
@@ -522,6 +523,17 @@ func (bc *BlockChain) startBlockGeneration() {
 			} else {
 				bc.createTransactionBlock()
 			}
+		}
+	}()
+}
+
+func (bc *BlockChain) manageChain() {
+	ticker := time.NewTicker(30 * time.Second)
+	go func() {
+		for t := range ticker.C {
+			fmt.Println(t)
+			bc.difficulty = len(bc.chain) / 2
+			// perform any
 		}
 	}()
 }
@@ -660,39 +672,40 @@ func (bc *BlockChain) getBlockBytes(block *Block) []byte {
 }
 
 func convertJsonArray(transaction string) []map[string]string {
+	fmt.Println(transaction)
 	res := make([]map[string]string, 0)
+	return res
 	recordList := strings.Split(transaction, "{;}")
 	for _, record := range recordList {
 		elements := strings.Split(record, "{,}")
 		json := make(map[string]string)
 		json["op"] = elements[0]
-		json["filename"] = elements[1]
-		json["content"] = elements[2]
+		if json["op"] == "No-Op" {
+			json["filename"] = ""
+			json["content"] = ""
+		} else {
+			json["filename"] = elements[1]
+			json["content"] = elements[2]
+		}
 		res = append(res, json)
 	}
 	return res
 }
 
 // maps blockprevhash -> index of content in the block that have the filename
-// func (bc *BlockChain) findFile(fileName string) (blockTxMap map[string][]int) {
-// 	blockTxMap = make(map[string][]int)
-// 	for _, block := range bc.chain {
-// 		for txID, tx := range block.Transactions {
-// 			hasBlock := false
-// 			if tx.filename == fileName {
-// 				if !hasBlock {
-// 					blockTxMap[block.PrevHash] = make([]int, 0)
-// 					hasBlock = true
-// 				}
-// 				blockTxMap[block.PrevHash] = append(blockTxMap[block.PrevHash], txID)
-// 				fmt.Println(block.PrevHash)
-// 				fmt.Println(tx.filename)
-// 			}
-// 		}
-// 	}
-// 	fmt.Println("map:", blockTxMap)
-// 	return blockTxMap
-// }
+func (bc *BlockChain) getFileNames() (fileNames []string) {
+	fileNames = make([]string, 0)
+	for _, block := range bc.chain {
+		jsons := convertJsonArray(block.Transactions)
+		for i := 0; i < len(jsons); i++ {
+			json := jsons[i]
+			if json["op"] == "CreateFile" {
+				fileNames = append(fileNames, json["filename"])
+			}
+		}
+	}
+	return fileNames
+}
 
 // func (bc *BlockChain) findFiles(fileName string) {
 // 	blockTxMap := make(map[string][]int)
@@ -741,7 +754,7 @@ func Initial() {
 		chainLock:    &sync.Mutex{},
 		chain:        make([]*Block, 0),
 		maxRecordNum: 2, // the maximum records in one block
-		difficulty:   5,
+		difficulty:   1,
 	}
 	minerChain.init()
 }
@@ -776,6 +789,11 @@ func main() {
 			printRecordQueue()
 		} else if strings.Contains(text, "bqueue") == true {
 			printBlockQueue()
+		} else if strings.Contains(text, "lfiles") == true {
+			fileNames := minerChain.getFileNames()
+			for _, name := range fileNames {
+				fmt.Println(name)
+			}
 		} else if strings.Contains(text, "pop") == true {
 			rec := popRecordQueue()
 			if rec == nil {
