@@ -672,8 +672,10 @@ func (bc *BlockChain) getBlockBytes(block *Block) []byte {
 }
 
 func convertJsonArray(transaction string) []map[string]string {
-	fmt.Println(transaction)
 	res := make([]map[string]string, 0)
+	if len(transaction) == 0 {
+		return res
+	}
 	recordList := strings.Split(transaction, "{;}")
 	for _, record := range recordList {
 		elements := strings.Split(record, "{,}")
@@ -740,6 +742,7 @@ func (bc *BlockChain) printChain() {
 			}
 		}
 		fmt.Println("Nonce: ", block.Nonce)
+		fmt.Println("Timestamp: ", block.Timestamp)
 		fmt.Println("****************************")
 	}
 }
