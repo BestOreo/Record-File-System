@@ -785,7 +785,7 @@ func (bc *BlockChain) validateTransactions(fileName string, opType string, conte
 		jsons := convertJsonArray(block.Transactions)
 		for i := 0; i < len(jsons); i++ {
 			json := jsons[i]
-			if json["op"] == opType && json["filename"] == fileName {
+			if json["op"] == opType && json["filename"] == fileName && json["content"] == content && json["op"] != "AppendRec" {
 				return false
 			}
 		}
