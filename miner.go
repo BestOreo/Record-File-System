@@ -463,7 +463,7 @@ func listenClient() {
 						fmt.Println("-----------------")
 						// codes about blockchain
 						conn.Write([]byte("success"))
-						operationMsg := generateOpMsg(msgjson["op"], msgjson["name"], msgjson["Content"])
+						operationMsg := generateOpMsg(msgjson["op"], msgjson["name"], msgjson["content"])
 						pushRecordQueue(&operationMsg)
 						broadcastOperations(operationMsg)
 					}
@@ -495,17 +495,17 @@ func listenClient() {
 				} else if msgjson["op"] == "AppendRec" {
 					if checkfile(msgjson["name"]) == false {
 						conn.Write([]byte("FileDoesNotExistError"))
-					} else if len(msgjson["Content"])/512 > 655354 { // have at most 65,5354 (uint16) records
+					} else if len(msgjson["content"])/512 > 655354 { // have at most 65,5354 (uint16) records
 						conn.Write([]byte("FileMaxLenReachedError"))
 					} else {
 						var m [512]byte
-						copy(m[:], []byte(msgjson["Content"]))
+						copy(m[:], []byte(msgjson["content"]))
 						blockFile[msgjson["name"]] += string(m[:])
 
 						// codes about blockchain
 
 						conn.Write([]byte(strconv.Itoa(len(blockFile[msgjson["name"]])/512 - 1)))
-						operationMsg := generateOpMsg(msgjson["op"], msgjson["name"], msgjson["Content"])
+						operationMsg := generateOpMsg(msgjson["op"], msgjson["name"], msgjson["content"])
 						pushRecordQueue(&operationMsg)
 						broadcastOperations(operationMsg)
 					}

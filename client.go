@@ -7,6 +7,8 @@ import (
 	"./rfslib"
 )
 
+type Record [512]byte
+
 func main() {
 	rfs, _ := rfslib.Initialize("127.0.0.1:8000", "127.0.0.1:9090")
 
@@ -21,6 +23,15 @@ func main() {
 		log.Fatal(err)
 	}
 	time.Sleep(1000)
+	// // try appending
+	// record := new(Record)
+	// record = []byte("thisisanexamplecontentstring")
+	// err = rfs.AppendRec("text.txt", record)
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
+	// time.Sleep(1000)
+
 	err = rfs.CreateFile("text3.txt")
 	if err != nil {
 		log.Fatal(err)
