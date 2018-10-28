@@ -674,7 +674,6 @@ func (bc *BlockChain) getBlockBytes(block *Block) []byte {
 func convertJsonArray(transaction string) []map[string]string {
 	fmt.Println(transaction)
 	res := make([]map[string]string, 0)
-	return res
 	recordList := strings.Split(transaction, "{;}")
 	for _, record := range recordList {
 		elements := strings.Split(record, "{,}")
