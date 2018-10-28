@@ -299,19 +299,20 @@ func (t *MinerHandle) FloodBlock(block *Block, reply *int) error {
 	*reply = 0
 	println("------------")
 	printColorFont("purple", "Receive Block")
-	fmt.Printf("%v\n", *block)
-	// for _, tx := range block.Transactions {
-	// 	fmt.Printf("%v\n", tx)
-	// }
-	println("------------")
+
 	if checkBlockInQueue(block) == false {
 		println("Repeated: False")
+		println("pre-Hash:", block.PrevHash)
+		println("index", block.Index)
+		println("tx", block.Transactions)
+		println("timestamp", block.Timestamp)
 		// pushBlockQueue(block)
 		// minerChain.addBlockToChain(block)
 		// broadcastBlocks(block)
 	} else {
 		println("Repeated: True")
 	}
+	println("------------")
 	return nil
 }
 
@@ -577,7 +578,6 @@ func (bc *BlockChain) createBlock() {
 func (bc *BlockChain) proofOfWork(block *Block) (Nonce uint32) {
 	Nonce = block.Nonce
 	str := bc.hashBlock(block)
-	println(str)
 	for {
 		numberOfZeros := strings.Repeat("0", bc.difficulty)
 		foundSolution := strings.HasSuffix(str, numberOfZeros)
@@ -614,15 +614,13 @@ func (bc *BlockChain) createTransaction(OpType string, fileName string, content 
 }
 
 func (bc *BlockChain) getBlockBytes(block *Block) []byte {
-	txString := ""
-
 	data := bytes.Join(
 		[][]byte{
 			[]byte(block.PrevHash),
 			[]byte(fmt.Sprint(strconv.Itoa(block.Index))),
 			[]byte(fmt.Sprint(strconv.Itoa(block.Timestamp))),
-			[]byte(txString),
-			[]byte(fmt.Sprint(block.Transactions)),
+			[]byte(fmt.Sprint(block.Nonce)),
+			[]byte(block.Transactions),
 		},
 		[]byte{},
 	)
@@ -700,7 +698,7 @@ func Initial() {
 		chainLock:    &sync.Mutex{},
 		chain:        make([]*Block, 0),
 		txBuffer:     make([]Tx, 0),
-		maxRecordNum: 10,
+		maxRecordNum: 2,
 		difficulty:   5,
 	}
 	minerChain.init()
