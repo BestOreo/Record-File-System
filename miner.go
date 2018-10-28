@@ -555,9 +555,9 @@ func (bc *BlockChain) init() {
 	bc.chain = append(bc.chain, block)
 	fmt.Println("Genisis block created.")
 
-	// bc.startBlockGeneration()
+	bc.startBlockGeneration()
 
-	bc.manageChain()
+	//bc.manageChain()
 }
 
 func (bc *BlockChain) startBlockGeneration() {
@@ -613,13 +613,18 @@ func (bc *BlockChain) verifyBlock(block *Block) (isValidBlock bool) {
 		if !bc.validateTransactions(json["filename"], json["op"], json["content"]) {
 			hasvalidTransactions = false
 		}
+		if !bc.validateCoinBalance(json["minerId"]) {
+			hasvalidTransactions = false
+		}
 	}
+	// validate coin balance
 
-	hasCorrectTxns := true
-	isValidBlock = hasCorrectHash && hasCorrectTxns && hasCorrectPrevHash && hasvalidTransactions
+	isValidBlock = hasCorrectHash && hasCorrectPrevHash && hasvalidTransactions
 	return isValidBlock
 }
-
+func (bc *BlockChain) validateCoinBalance(minerID string) (valid bool) {
+	return true
+}
 func (bc *BlockChain) addBlockToChain(block *Block) {
 	// add it to the chain
 	bc.chainLock.Lock()
@@ -756,9 +761,11 @@ func convertJsonArray(transaction string) []map[string]string {
 		if json["op"] == "No-Op" {
 			json["filename"] = ""
 			json["content"] = ""
+			json["minerId"] = elements[3]
 		} else {
 			json["filename"] = elements[1]
 			json["content"] = elements[2]
+			json["minerId"] = elements[3]
 		}
 		res = append(res, json)
 	}
@@ -785,7 +792,7 @@ func (bc *BlockChain) validateTransactions(fileName string, opType string, conte
 		jsons := convertJsonArray(block.Transactions)
 		for i := 0; i < len(jsons); i++ {
 			json := jsons[i]
-			if json["op"] == opType && json["filename"] == fileName && json["content"] == content && json["op"] != "AppendRec" {
+			if json["op"] == opType && json["filename"] == fileName && json["content"] == content && json["op"] != "AppendRec" && json["op"] != "No-Op" {
 				return false
 			}
 		}
@@ -842,7 +849,7 @@ func Initial() {
 		chainLock:    &sync.Mutex{},
 		chain:        make([]*Block, 0),
 		maxRecordNum: 2, // the maximum records in one block
-		difficulty:   1,
+		difficulty:   5,
 	}
 	minerChain.init()
 }
