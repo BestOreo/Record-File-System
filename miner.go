@@ -132,8 +132,40 @@ func showfiles() {
 	println("------------------------")
 }
 
+func hashOpMsg(opmsg *OpMsg) (hashStr string) {
+	recordQueueMutex.Lock()
+	str := opmsg.Content + opmsg.MinerID + opmsg.Name + opmsg.Op
+	hash := md5.New()
+	hash.Write([]byte(str))
+	hashStr = hex.EncodeToString(hash.Sum(nil))
+	return hashStr
+}
+
+func checkOpHashMap(a string, list []string) bool {
+	for _, b := range list {
+		if b == a {
+			return true
+		}
+	}
+	return false
+}
+
+var OpHashMap []string
+
 /*******************************************/
 // Queue Opearation
+// func pushRecordQueue(opmsg *OpMsg) {
+// 	recordQueueMutex.Lock()
+// 	hashOp := hashOpMsg(opmsg)
+// 	if checkOpHashMap(hashOp, OpHashMap) {
+// 		fmt.Println("Has transaction")
+// 	} else {
+// 		recordQueue = append(recordQueue, opmsg)
+// 		OpHashMap = append(OpHashMap, hashOp)
+// 	}
+// 	recordQueueMutex.Unlock()
+// }
+
 func pushRecordQueue(opmsg *OpMsg) {
 	recordQueueMutex.Lock()
 	recordQueue = append(recordQueue, opmsg)
@@ -503,6 +535,7 @@ type BlockChain struct {
 }
 
 func (bc *BlockChain) init() {
+	OpHashMap = make([]string, 0)
 	// create genesis block
 	block := &Block{}
 	block.PrevHash = ""
@@ -560,8 +593,18 @@ func (bc *BlockChain) verifyBlock(block *Block) (isValidBlock bool) {
 		fmt.Println("incorrect hash")
 	}
 	// validate all the transactions
+	transactions := convertJsonArray(block.Transactions)
+	hasvalidTransactions := true
+	for i := 0; i < len(transactions); i++ {
+		json := transactions[i]
+		if !bc.validateTransactions(json["filename"], json["op"], json["content"]) {
+			hasvalidTransactions = false
+		}
+	}
+	fmt.Println("verifying transactions")
+
 	hasCorrectTxns := true
-	isValidBlock = hasCorrectHash && hasCorrectTxns && hasCorrectPrevHash
+	isValidBlock = hasCorrectHash && hasCorrectTxns && hasCorrectPrevHash && hasvalidTransactions
 	return isValidBlock
 }
 func (bc *BlockChain) addBlockToChain(block *Block) {
@@ -706,6 +749,19 @@ func (bc *BlockChain) getFileNames() (fileNames []string) {
 		}
 	}
 	return fileNames
+}
+
+func (bc *BlockChain) validateTransactions(fileName string, opType string, content string) (valid bool) {
+	for _, block := range bc.chain {
+		jsons := convertJsonArray(block.Transactions)
+		for i := 0; i < len(jsons); i++ {
+			json := jsons[i]
+			if json["op"] == opType && json["filename"] == fileName {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // func (bc *BlockChain) findFiles(fileName string) {
