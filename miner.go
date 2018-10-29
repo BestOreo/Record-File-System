@@ -98,7 +98,7 @@ func readFileByte(filePath string) []byte {
 }
 
 func checkfile(fname string) bool {
-	for k := range blockFile {
+	for _, k := range minerChain.getFileNames() {
 		if k == fname {
 			return true
 		}
@@ -167,6 +167,11 @@ var OpHashMap []string
 // }
 
 func pushRecordQueue(opmsg *OpMsg) {
+	for _, q := range recordQueue {
+		if q.Op == "CreateFile" && opmsg.Op == "CreateFile" && q.Name == opmsg.Name {
+			return
+		}
+	}
 	recordQueueMutex.Lock()
 	recordQueue = append(recordQueue, opmsg)
 	recordQueueMutex.Unlock()
@@ -347,6 +352,7 @@ func (t *MinerHandle) FloodBlock(block *Block, reply *int) error {
 	printColorFont("purple", "*** Receive Block")
 
 	if checkBlockInQueue(block) == false {
+		root.addChild(*block)
 		println("------------")
 		println("Repeated: False")
 		println("pre-Hash:", block.PrevHash)
@@ -527,6 +533,63 @@ func listenClient() {
 }
 
 /*** Blockchain ***/
+type BlockNode struct {
+	block         Block
+	hashvalue     string
+	blockChildren []*BlockNode
+}
+
+var root BlockNode
+
+func (root *BlockNode) addChild(node Block) {
+	println("-------- addChild ---------")
+	parent := root.findNode(node.PrevHash)
+	if parent == nil {
+		println("No such node has prevHash:", node.PrevHash)
+	} else {
+		println("Add into tree successfully")
+		child := &BlockNode{node, minerChain.hashBlock(&node), nil}
+		parent.blockChildren = append(parent.blockChildren, child)
+	}
+	println("-------- End addChild ---------\n")
+
+}
+
+func (parent *BlockNode) findNode(prehash string) *BlockNode {
+	if prehash == parent.hashvalue {
+		return parent
+	}
+	for _, node := range parent.blockChildren {
+		n := node.findNode(prehash)
+		if n != nil {
+			return n
+		}
+	}
+	return nil
+}
+
+func printTreeNode(node BlockNode, suffix string) {
+	println(suffix+"Index:", node.block.Index)
+	println(suffix+"Hashvalue:", node.hashvalue)
+	println(suffix+"PrevHash:", node.block.PrevHash)
+	println(suffix+"Timestamp:", node.block.Timestamp)
+	println(suffix+"Miner:", node.block.Miner)
+	println(suffix+"Transactions:", node.block.Transactions)
+	println(suffix+"Nonce:", node.block.Nonce)
+	println(suffix + "Children:")
+	for i := 0; i < len(node.blockChildren); i++ {
+		child := node.blockChildren[i]
+		println(suffix + "\t" + strconv.Itoa(i))
+		printTreeNode(*child, suffix+"\t")
+		println()
+	}
+}
+
+func (root *BlockNode) printTree() {
+	println("---------------------- Tree ------------------------------")
+	printTreeNode(*root, "")
+	println("---------------------- End Tree --------------------------")
+}
 
 // Block is a single structure in the chain
 type Block struct {
@@ -550,10 +613,12 @@ func (bc *BlockChain) init() {
 	OpHashMap = make([]string, 0)
 	// create genesis block
 	block := &Block{}
-	block.PrevHash = ""
+	block.PrevHash = config.GenesisBlockHash
 	block.Nonce = 0
 	bc.chain = append(bc.chain, block)
 	fmt.Println("Genisis block created.")
+
+	root = BlockNode{*block, minerChain.hashBlock(block), nil} // initial tree
 
 	bc.startBlockGeneration()
 
@@ -563,10 +628,10 @@ func (bc *BlockChain) init() {
 func (bc *BlockChain) startBlockGeneration() {
 	ticker := time.NewTicker(10 * time.Second)
 	go func() {
-		for t := range ticker.C {
-			fmt.Println(t)
+		for _ = range ticker.C {
+			// fmt.Println(t)
 			if len(recordQueue) == 0 {
-				bc.createNoOpBlock()
+				// bc.createNoOpBlock()
 			} else {
 				bc.createTransactionBlock()
 			}
@@ -905,6 +970,20 @@ func main() {
 			for _, v := range s {
 				println(v["op"], v["filename"], v["content"])
 			}
+		} else if strings.Contains(text, "treetest") == true {
+			b := Block{root.hashvalue, 0, 0, 65535, "Miner", "A,B,C,D"}
+			b1 := Block{minerChain.hashBlock(&b), 0, 0, 1234, "ad", "C,D"}
+			b2 := Block{minerChain.hashBlock(&b), 0, 0, 1234, "ad", "C,D"}
+			c := Block{root.hashvalue, 0, 0, 1234, "ad", "C,D"}
+			d := Block{minerChain.hashBlock(&c), 0, 0, 1234, "ad", "C,D"}
+			root.addChild(b)
+			root.addChild(b1)
+			root.addChild(b2)
+			root.addChild(c)
+			root.addChild(d)
+			root.printTree()
+		} else if strings.Contains(text, "tree") == true {
+			root.printTree()
 		}
 	}
 }
