@@ -711,7 +711,7 @@ func (bc *BlockChain) startBlockGeneration() {
 		for _ = range ticker.C {
 			// fmt.Println(t)
 			if len(recordQueue) == 0 {
-				// bc.createNoOpBlock()
+				bc.createNoOpBlock()
 			} else {
 				bc.createTransactionBlock()
 			}
@@ -843,6 +843,35 @@ func (bc *BlockChain) createTransactionBlock() {
 		return
 	}
 
+	// mine the block to find solution
+	block.Nonce = bc.proofOfWork(block)
+
+	println("*****************")
+	fmt.Printf("* Block Info\n")
+	println("*Index:", block.Index)
+	println("*Miner:", block.Miner)
+	println("*Transaction:", block.Transactions)
+	println("*Nonce:", block.Nonce)
+	println("*****************")
+
+	broadcastBlocks(block)
+}
+
+func (bc *BlockChain) createNoOpBlock() {
+	// set prev hash
+	block := &Block{}
+
+	longestMutex.Lock()
+	lastblock := longestChainNodes[rand.Int()%len(longestChainNodes)] // pick the longest chain randomly
+	block.Index = lastblock.block.Index + 1
+	longestMutex.Unlock()
+
+	block.PrevHash = lastblock.hashvalue
+
+	// block.Transactions = bc.txBuffer
+	block.Timestamp = makeTimestamp()
+	block.Miner = config.MinerID
+	block.Transactions = "No-Op" + "{,}" + "" + "{,}" + "" + "{,}" + config.MinerID + "{,}" + ""
 	// mine the block to find solution
 	block.Nonce = bc.proofOfWork(block)
 
@@ -1003,7 +1032,7 @@ func Initial() {
 		chainLock:    &sync.Mutex{},
 		chain:        make([]*Block, 0),
 		maxRecordNum: 2, // the maximum records in one block
-		difficulty:   5,
+		difficulty:   config.PowPerOpBlock,
 	}
 	minerChain.init()
 
