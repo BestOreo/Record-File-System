@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"net"
 	"net/http"
 	"net/rpc"
@@ -352,7 +353,6 @@ func (t *MinerHandle) FloodBlock(block *Block, reply *int) error {
 	printColorFont("purple", "*** Receive Block")
 
 	if checkBlockInQueue(block) == false {
-		root.addChild(*block)
 		println("------------")
 		println("Repeated: False")
 		println("pre-Hash:", block.PrevHash)
@@ -366,13 +366,18 @@ func (t *MinerHandle) FloodBlock(block *Block, reply *int) error {
 				json := jsons[i]
 				fmt.Printf("%d\top:%s\tfilename:%s\tcontent:%s\n", i, json["op"], json["filename"], json["content"])
 			}
-			println("timestamp:", block.Timestamp)
-			println("------------")
-			println()
-			pushBlockQueue(block)
-			minerChain.addBlockToChain(block)
-			broadcastBlocks(block)
 		}
+		println("timestamp:", block.Timestamp)
+		println("------------")
+		println()
+		pushBlockQueue(block)
+
+		minerChain.addBlockToChain(block) //old way
+
+		root.addChild(*block) // new way
+
+		broadcastBlocks(block)
+
 	} else {
 		println("Repeated: True")
 		println("From", block.Miner)
@@ -537,19 +542,39 @@ type BlockNode struct {
 	block         Block
 	hashvalue     string
 	blockChildren []*BlockNode
+	parent        *BlockNode
 }
 
 var root BlockNode
+
+var longestMutex sync.Mutex        // longestMutex to protect both maxLength and longestChainNodes
+var maxLength int                  // length of longest chain
+var longestChainNodes []*BlockNode // to record the tail node address of longest chain
 
 func (root *BlockNode) addChild(node Block) {
 	println("-------- addChild ---------")
 	parent := root.findNode(node.PrevHash)
 	if parent == nil {
-		println("No such node has prevHash:", node.PrevHash)
+		printColorFont("red", "No such node has prevHash: "+node.PrevHash)
 	} else {
 		println("Add into tree successfully")
-		child := &BlockNode{node, minerChain.hashBlock(&node), nil}
+		child := &BlockNode{node, minerChain.hashBlock(&node), nil, parent}
 		parent.blockChildren = append(parent.blockChildren, child)
+
+		// find a new longest chain
+		if node.Index > maxLength {
+			longestMutex.Lock()
+			maxLength = node.Index
+			longestChainNodes = make([]*BlockNode, 0)
+			longestChainNodes = append(longestChainNodes, child)
+			longestMutex.Unlock()
+		} else if node.Index == maxLength {
+			// more than one longest chain
+			longestMutex.Lock()
+			longestChainNodes = append(longestChainNodes, child)
+			longestMutex.Unlock()
+		}
+
 	}
 	println("-------- End addChild ---------\n")
 
@@ -618,7 +643,13 @@ func (bc *BlockChain) init() {
 	bc.chain = append(bc.chain, block)
 	fmt.Println("Genisis block created.")
 
-	root = BlockNode{*block, minerChain.hashBlock(block), nil} // initial tree
+	// tree
+	root = BlockNode{*block, minerChain.hashBlock(block), nil, nil} // initial tree
+
+	longestMutex.Lock()
+	longestChainNodes = append(longestChainNodes, &root)
+	maxLength = 0
+	longestMutex.Unlock()
 
 	bc.startBlockGeneration()
 
@@ -707,34 +738,66 @@ func (bc *BlockChain) addBlockToChain(block *Block) {
 
 }
 
+func checkRecordInChain(record *OpMsg, node *BlockNode) bool {
+	str := record.Op + "{,}" + record.Name + "{,}" + record.Content
+	for {
+		if node.parent == nil {
+			return false
+		}
+		if strings.Contains(node.block.Transactions, str) == true {
+			return true
+		}
+		node = node.parent
+	}
+}
+
 // when timeout, you just use API createBlock
 // the function will read records from the queue
 // and generate a new block
 func (bc *BlockChain) createTransactionBlock() {
 	// set prev hash
 	block := &Block{}
-	block.PrevHash = bc.hashBlock(bc.chain[len(bc.chain)-1])
+
+	longestMutex.Lock()
+	lastblock := longestChainNodes[rand.Int()%len(longestChainNodes)] // pick the longest chain randomly
+	block.Index = lastblock.block.Index + 1
+	longestMutex.Unlock()
+
+	block.PrevHash = lastblock.hashvalue
+
 	// block.Transactions = bc.txBuffer
 	block.Timestamp = makeTimestamp()
-	block.Index = len(bc.chain)
 	block.Miner = config.MinerID
 
 	var transactionNum int
-	// there are two cases
-	if len(recordQueue) > bc.maxRecordNum {
-		transactionNum = bc.maxRecordNum
-	} else {
-		transactionNum = len(recordQueue)
-	}
 
-	for i := 0; i < transactionNum; i++ {
+	for {
+		if len(recordQueue) == 0 {
+			break //note
+		}
 		record := popRecordQueue()
-		if len(block.Transactions) == 0 {
-			block.Transactions = record.Op + "{,}" + record.Name + "{,}" + record.Content + "{,}" + record.MinerID
+		if checkRecordInChain(record, lastblock) == true {
+			str := record.Op + "{,}" + record.Name + "{,}" + record.Content
+			printColorFont("red", config.MinerID+" "+str+" "+lastblock.block.Transactions)
+			continue
 		} else {
-			block.Transactions += "{;}" + record.Op + "{,}" + record.Name + "{,}" + record.Content + "{,}" + record.MinerID
+			if len(block.Transactions) == 0 {
+				block.Transactions = record.Op + "{,}" + record.Name + "{,}" + record.Content + "{,}" + record.MinerID
+			} else {
+				block.Transactions += "{;}" + record.Op + "{,}" + record.Name + "{,}" + record.Content + "{,}" + record.MinerID
+			}
+			transactionNum++
+		}
+		if transactionNum == bc.maxRecordNum {
+			break
 		}
 	}
+
+	// it's not right, just for convenience
+	if transactionNum == 0 {
+		return
+	}
+
 	// mine the block to find solution
 	block.Nonce = bc.proofOfWork(block)
 
@@ -917,6 +980,8 @@ func Initial() {
 		difficulty:   5,
 	}
 	minerChain.init()
+
+	rand.Seed(time.Now().Unix())
 }
 
 /*** END Blockchain ***/
