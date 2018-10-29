@@ -42,7 +42,7 @@ func main() {
 	copy(record[:], record_string)
 	record_num, err := rfs.AppendRec(fname, &record)
 	if err != nil {
-		log.Fatalf("Failed to append %s to file %f\n", record_string, fname)
+		log.Fatalf("Failed to append %s to file %s\n", record_string, fname)
 	}
 	fmt.Printf("Succesfully appended a record to file %s at index %d\n", fname, record_num)
 }

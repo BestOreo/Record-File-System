@@ -99,25 +99,67 @@ func readFileByte(filePath string) []byte {
 }
 
 func checkfile(fname string) bool {
-	for _, k := range minerChain.getFileNames() {
-		if k == fname {
+	longestMutex.Lock()
+	lastblock := longestChainNodes[rand.Int()%len(longestChainNodes)]
+	longestMutex.Unlock()
+	for {
+		if lastblock == nil {
+			return false
+		}
+		if strings.Contains(lastblock.block.Transactions, "CreateFile"+"{,}"+fname) == true {
 			return true
 		}
+		lastblock = lastblock.parent
 	}
 	return false
 }
 
+func getAllRecordByName(fname string) []string {
+	longestMutex.Lock()
+	lastblock := longestChainNodes[rand.Int()%len(longestChainNodes)]
+	longestMutex.Unlock()
+	res := make([]string, 0)
+	for {
+		if lastblock == nil {
+			return res
+		}
+		if strings.Contains(lastblock.block.Transactions, "AppendRec"+"{,}"+fname) == true {
+			jsons := convertJsonArray(lastblock.block.Transactions)
+			for _, json := range jsons {
+				if json["op"] == "AppendRec" && json["filename"] == fname {
+					res = append(res, json["content"])
+				}
+			}
+		}
+		lastblock = lastblock.parent
+	}
+	return res
+}
+
 func getFileList() string {
 	res := ""
-	for fname := range blockFile {
-		if len(res) == 0 {
-			res += fname
-		} else {
-			res += ";" + fname
+
+	longestMutex.Lock()
+	lastblock := longestChainNodes[rand.Int()%len(longestChainNodes)]
+	longestMutex.Unlock()
+
+	for {
+		if lastblock == nil {
+			break
 		}
-	}
-	if len(res) == 0 {
-		res = "No File"
+		if strings.Contains(lastblock.block.Transactions, "CreateFile") == true {
+			jsons := convertJsonArray(lastblock.block.Transactions)
+			for _, json := range jsons {
+				if json["op"] == "CreateFile" {
+					if len(res) == 0 {
+						res += json["filename"]
+					} else {
+						res += ";" + json["filename"]
+					}
+				}
+			}
+		}
+		lastblock = lastblock.parent
 	}
 	return res
 }
@@ -353,6 +395,9 @@ func (t *MinerHandle) FloodBlock(block *Block, reply *int) error {
 	printColorFont("purple", "*** Receive Block")
 
 	if checkBlockInQueue(block) == false {
+		if minerChain.verifyBlock(block) == false {
+			return nil
+		}
 		println("------------")
 		println("Repeated: False")
 		println("pre-Hash:", block.PrevHash)
@@ -372,7 +417,7 @@ func (t *MinerHandle) FloodBlock(block *Block, reply *int) error {
 		println()
 		pushBlockQueue(block)
 
-		minerChain.addBlockToChain(block) //old way
+		// minerChain.addBlockToChain(block) //old way
 
 		root.addChild(*block) // new way
 
@@ -472,7 +517,7 @@ func listenClient() {
 				if err != nil {
 					fmt.Println("error: ", err)
 				}
-				fmt.Println(msgjson["op"], msgjson["name"], msgjson["Content"])
+				fmt.Println(msgjson["op"], msgjson["name"], msgjson["content"])
 
 				// Client CreateFile
 				if msgjson["op"] == "CreateFile" {
@@ -497,21 +542,25 @@ func listenClient() {
 					if checkfile(msgjson["name"]) == false {
 						conn.Write([]byte("FileDoesNotExistError"))
 					} else {
-						conn.Write([]byte(strconv.Itoa(len(blockFile[msgjson["name"]]) / 512)))
+						records := getAllRecordByName(msgjson["name"])
+						conn.Write([]byte(strconv.Itoa(len(records))))
 					}
 					// Client ReadRec
 				} else if msgjson["op"] == "ReadRec" {
-					pos, err := strconv.Atoi(msgjson["Content"])
+					pos, err := strconv.Atoi(msgjson["content"])
 					if err != nil {
 						log.Fatal("record num isn't integer")
 						continue
 					}
 					if checkfile(msgjson["name"]) == false {
 						conn.Write([]byte("FileDoesNotExistError"))
-					} else if len(blockFile[msgjson["name"]])/512-1 < pos {
+						continue
+					}
+					records := getAllRecordByName(msgjson["name"])
+					if len(records) < pos {
 						conn.Write([]byte("RecordDoesNotExistError"))
 					} else {
-						conn.Write([]byte(blockFile[msgjson["name"]][pos*512 : pos*512+512]))
+						conn.Write([]byte(records[pos]))
 					}
 					// Client AppendRec
 				} else if msgjson["op"] == "AppendRec" {
@@ -685,61 +734,57 @@ func (bc *BlockChain) manageChain() {
 func (bc *BlockChain) verifyBlock(block *Block) (isValidBlock bool) {
 	numberOfZeros := strings.Repeat("0", bc.difficulty)
 	blockHash := bc.hashBlock(block)
-	lastBlock := bc.chain[len(bc.chain)-1]
-	lastBlockHash := bc.hashBlock(lastBlock)
-	// should point to last block hash
-	hasCorrectPrevHash := block.PrevHash == lastBlockHash
-	if !hasCorrectPrevHash {
-		fmt.Println("Block.PrevHash:", block.PrevHash)
-		fmt.Println("Real PrevHash", lastBlockHash)
-		fmt.Println("Hint: Incorrect prev hash")
-	}
-	// hashing should produce correct number of zeros
-	hasCorrectHash := strings.HasSuffix(blockHash, numberOfZeros)
-	if !hasCorrectHash {
-		fmt.Println("BlockHash:\t", blockHash)
-		fmt.Println("BlockNonce:\t", block.Nonce)
-		fmt.Println("Hint: Incorrect hash")
-	}
-	// validate all the transactions
-	transactions := convertJsonArray(block.Transactions)
-	hasvalidTransactions := true
-	for i := 0; i < len(transactions); i++ {
-		json := transactions[i]
-		if !bc.validateTransactions(json["filename"], json["op"], json["content"]) {
-			hasvalidTransactions = false
+	longestMutex.Lock()
+	for i := 0; i < len(longestChainNodes); i++ {
+		lastBlock := longestChainNodes[i]
+		lastBlockHash := bc.hashBlock(&lastBlock.block)
+		// should point to last block hash
+		hasCorrectPrevHash := block.PrevHash == lastBlockHash
+		if !hasCorrectPrevHash {
+			fmt.Println("Block.PrevHash:", block.PrevHash)
+			fmt.Println("Real PrevHash", lastBlockHash)
+			fmt.Println("Hint: Incorrect prev hash")
 		}
-		if !bc.validateCoinBalance(json["minerId"]) {
-			hasvalidTransactions = false
+		// hashing should produce correct number of zeros
+		hasCorrectHash := strings.HasSuffix(blockHash, numberOfZeros)
+		if !hasCorrectHash {
+			fmt.Println("BlockHash:\t", blockHash)
+			fmt.Println("BlockNonce:\t", block.Nonce)
+			fmt.Println("Hint: Incorrect hash")
 		}
-	}
-	// validate coin balance
+		// validate all the transactions
+		transactions := convertJsonArray(block.Transactions)
+		hasvalidTransactions := true
+		for i := 0; i < len(transactions); i++ {
+			json := transactions[i]
+			if !bc.validateTransactions(json["filename"], json["op"], json["content"]) {
+				hasvalidTransactions = false
+			}
+			if !bc.validateCoinBalance(json["minerId"]) {
+				hasvalidTransactions = false
+			}
+		}
+		// validate coin balance
 
-	isValidBlock = hasCorrectHash && hasCorrectPrevHash && hasvalidTransactions
+		isValidBlock = hasCorrectHash && hasCorrectPrevHash && hasvalidTransactions
+		if isValidBlock == true {
+			break
+		}
+	}
+	longestMutex.Unlock()
 	return isValidBlock
 }
 func (bc *BlockChain) validateCoinBalance(minerID string) (valid bool) {
 	return true
 }
-func (bc *BlockChain) addBlockToChain(block *Block) {
-	// add it to the chain
-	bc.chainLock.Lock()
-	println(getTime())
-	println("----------verifyBlock----------")
-	if bc.verifyBlock(block) {
-		bc.chain = append(bc.chain, block)
-		fmt.Println("Result: Block Added")
-	} else {
-		fmt.Println("Result: Block not verified.")
-	}
-	println("----------End verifyBlock----------")
-	println()
-	bc.chainLock.Unlock()
-
-}
 
 func checkRecordInChain(record *OpMsg, node *BlockNode) bool {
-	str := record.Op + "{,}" + record.Name + "{,}" + record.Content
+	var str string
+	if record.Op == "CreateFile" {
+		str = record.Op + "{,}" + record.Name
+	} else {
+		str = record.Op + "{,}" + record.Name + "{,}" + record.Content + "{,}" + record.MinerID + "{,}" + strconv.Itoa(int(record.MsgID))
+	}
 	for {
 		if node.parent == nil {
 			return false
@@ -777,14 +822,14 @@ func (bc *BlockChain) createTransactionBlock() {
 		}
 		record := popRecordQueue()
 		if checkRecordInChain(record, lastblock) == true {
-			str := record.Op + "{,}" + record.Name + "{,}" + record.Content
+			str := record.Op + "{,}" + record.Name + "{,}" + record.Content + "{,}" + record.MinerID + "{,}" + strconv.Itoa(int(record.MsgID))
 			printColorFont("red", config.MinerID+" "+str+" "+lastblock.block.Transactions)
 			continue
 		} else {
 			if len(block.Transactions) == 0 {
-				block.Transactions = record.Op + "{,}" + record.Name + "{,}" + record.Content + "{,}" + record.MinerID
+				block.Transactions = record.Op + "{,}" + record.Name + "{,}" + record.Content + "{,}" + record.MinerID + "{,}" + strconv.Itoa(int(record.MsgID))
 			} else {
-				block.Transactions += "{;}" + record.Op + "{,}" + record.Name + "{,}" + record.Content + "{,}" + record.MinerID
+				block.Transactions += "{;}" + record.Op + "{,}" + record.Name + "{,}" + record.Content + "{,}" + record.MinerID + "{,}" + strconv.Itoa(int(record.MsgID))
 			}
 			transactionNum++
 		}
@@ -809,25 +854,6 @@ func (bc *BlockChain) createTransactionBlock() {
 	println("*Nonce:", block.Nonce)
 	println("*****************")
 
-	bc.addBlockToChain(block)
-	broadcastBlocks(block)
-}
-
-func (bc *BlockChain) createNoOpBlock() {
-	// set prev hash
-	block := &Block{}
-	block.PrevHash = bc.hashBlock(bc.chain[len(bc.chain)-1])
-	// block.Transactions = bc.txBuffer
-	block.Timestamp = makeTimestamp()
-	block.Index = len(bc.chain)
-	block.Transactions = "No-Op" + "{,}" + "{,}" + "{,}" + config.MinerID
-	block.Miner = config.MinerID
-
-	// mine the block to find solution
-	block.Nonce = bc.proofOfWork(block)
-	fmt.Printf("Block is %v\n", block)
-
-	bc.addBlockToChain(block)
 	broadcastBlocks(block)
 }
 
