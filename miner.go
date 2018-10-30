@@ -637,6 +637,7 @@ var root BlockNode
 var longestMutex sync.Mutex        // longestMutex to protect both maxLength and longestChainNodes
 var maxLength int                  // length of longest chain
 var longestChainNodes []*BlockNode // to record the tail node address of longest chain
+var tailNodes []*BlockNode
 
 func (root *BlockNode) addChild(node Block) {
 	println("-------- addChild ---------")
