@@ -585,11 +585,13 @@ func listenClient() {
 						// codes about blockchain
 						operationMsg := generateOpMsg(msgjson["op"], msgjson["name"], msgjson["content"])
 						// retrun msgID,time interval, ConfirmsPerFileAppend, current length
-						longestMutex.Lock()
-						conn.Write([]byte(strconv.Itoa(int(operationMsg.MsgID)) + ";" + strconv.Itoa(config.GenOpBlockTimeout) + ";" + config.MinerID))
-						longestMutex.Unlock()
 						pushRecordQueue(&operationMsg)
 						broadcastOperations(operationMsg)
+
+						queryRecord(operationMsg)
+
+						records := getAllRecordByName(msgjson["name"])
+						conn.Write([]byte(strconv.Itoa(len(records))))
 					}
 				} else if msgjson["op"] == "queryFile" {
 					tranction := msgjson["name"]
@@ -621,6 +623,35 @@ func queryFilePos(transaction string, minerID string) string {
 			}
 		}
 		lastblock = lastblock.parent
+	}
+}
+
+func queryRecord(record OpMsg) {
+
+	transaction := record.Op + "{,}" + record.Name + "{,}" + record.Content + "{,}" + record.MinerID + "{,}" + strconv.Itoa(int(record.MsgID))
+	ticker := time.NewTicker(time.Duration(1) * time.Second)
+	for range ticker.C {
+		longestMutex.Lock()
+		lastblock := longestChainNodes[rand.Int()%len(longestChainNodes)] // pick the longest chain randomly
+		curLength := maxLength
+		longestMutex.Unlock()
+		// println("Query")
+		// println("----------------")
+		for {
+			if lastblock == nil {
+				break
+			}
+			// println(lastblock.block.Transactions)
+			// println(transaction)
+			// println()
+			if lastblock.block.Transactions == transaction {
+				if curLength-lastblock.block.Index >= config.ConfirmsPerFileAppend {
+					return
+				}
+			}
+			lastblock = lastblock.parent
+		}
+		// println("----------------")
 	}
 }
 
@@ -1028,7 +1059,7 @@ var disableNoOp bool
 
 func main() {
 
-	disableNoOp = true
+	// disableNoOp = true
 
 	if len(os.Args) != 2 {
 		println("go run miner.go [settings]")
