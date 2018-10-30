@@ -368,6 +368,7 @@ func sendMiner(remoteIPPort string, args ClientMsg) {
 	if err != nil {
 		log.Fatal("dialing:", err)
 	}
+	defer client.Close()
 	// Synchronous call
 	var reply int
 	err = client.Call("MinerHandle.MinerTalk", args, &reply)
@@ -445,12 +446,21 @@ func (t *MinerHandle) FloodBlock(block *Block, reply *int) error {
 
 // broadcast opearation of client to whole network
 func broadcastOperations(operationMsg OpMsg) {
+	if checkBalance(operationMsg) == false {
+		ticker := time.NewTicker(time.Duration(1) * time.Second)
+		for range ticker.C {
+			if checkBalance(operationMsg) == true {
+				break
+			}
+		}
+	}
 	for _, ip := range config.PeerMinersAddrs {
 		client, err := rpc.DialHTTP("tcp", ip)
 		if err != nil {
 			println("dialing:", err)
 			continue
 		}
+		defer client.Close()
 		var reply int
 		err = client.Call("MinerHandle.FloodOperation", operationMsg, &reply)
 		if err != nil {
@@ -476,6 +486,7 @@ func broadcastBlocks(block *Block) {
 			println("dialing:", err)
 			continue
 		}
+		defer client.Close()
 		var reply int
 		err = client.Call("MinerHandle.FloodBlock", block, &reply)
 		if err != nil {
@@ -770,18 +781,14 @@ func (bc *BlockChain) init() {
 	maxLength = 0
 	longestMutex.Unlock()
 
-	bc.startBlockGeneration()
-
 	//bc.manageChain()
 }
 
-func (bc *BlockChain) startBlockGeneration() {
+func startBlockGeneration() {
 	ticker := time.NewTicker(10 * time.Second)
-	go func() {
-		for range ticker.C {
-			bc.createTransactionBlock()
-		}
-	}()
+	for range ticker.C {
+		createTransactionBlock()
+	}
 }
 
 func (bc *BlockChain) manageChain() {
@@ -795,8 +802,91 @@ func (bc *BlockChain) manageChain() {
 	}()
 }
 
+func printLedge() {
+	longestMutex.Lock()
+	lastblock := longestChainNodes[rand.Int()%len(longestChainNodes)] // pick the longest chain randomly
+	longestMutex.Unlock()
+	ledge := getLedge(lastblock)
+	println("--------- Ledge -------------")
+	for k, v := range ledge {
+		fmt.Printf("| %s\t%d\n", k, v)
+	}
+	println("--------- End Ledge ---------")
+}
+
+func getLedge(blocknode *BlockNode) map[string]int {
+	ledge := make(map[string]int)
+	for {
+		if blocknode.parent == nil {
+			return ledge
+		}
+		transactions := convertJsonArray(blocknode.block.Transactions)
+		blockMinerID := blocknode.block.Miner
+		if _, ok := ledge[blockMinerID]; !ok {
+			ledge[blockMinerID] = 0
+		}
+
+		if blocknode.block.Transactions == "" {
+			ledge[blockMinerID] += config.MinedCoinsPerNoOpBlock
+		} else {
+			ledge[blockMinerID] += config.MinedCoinsPerOpBlock
+		}
+
+		for _, json := range transactions {
+			minerID := json["minerId"]
+			if _, ok := ledge[minerID]; !ok {
+				ledge[minerID] = 0
+			}
+			if json["op"] == "CreateFile" {
+				ledge[minerID] -= config.NumCoinsPerFileCreate
+			} else if json["op"] == "AppendRec" {
+				ledge[minerID]-- //just one coin
+			}
+		}
+		blocknode = blocknode.parent
+	}
+}
+
+func checkBalance(operationMsg OpMsg) bool {
+	longestMutex.Lock()
+	lastblock := longestChainNodes[rand.Int()%len(longestChainNodes)] // pick the longest chain randomly
+	longestMutex.Unlock()
+	ledge := getLedge(lastblock)
+
+	minerID := operationMsg.MinerID
+
+	if _, ok := ledge[minerID]; !ok {
+		// println("@@@@@@@@@@@@")
+		// fmt.Printf("%v\n", operationMsg)
+		// println("Now", minerID, "balance is", 0)
+		// println("@@@@@@@@@@@@")
+
+		return false
+	}
+
+	// println("@@@@@@@@@@@@")
+	// fmt.Printf("%v\n", operationMsg)
+	// println("Now", minerID, "balance is", ledge[minerID])
+	// println("@@@@@@@@@@@@")
+
+	if operationMsg.Op == "CreateFile" {
+		if ledge[minerID] < config.NumCoinsPerFileCreate {
+			return false
+		}
+		return true
+	}
+	if operationMsg.Op == "AppendRec" {
+		if ledge[minerID] < 1 {
+			return false
+		}
+		return true
+	}
+	return false
+}
+
 // This function should only occur when the chain is locked.
 func (bc *BlockChain) verifyBlock(block *Block) (isValidBlock bool) {
+	println("fsadfasdfsadfsdafasdfsdafsda")
 	numberOfZeros := strings.Repeat("0", bc.difficulty)
 	blockHash := bc.hashBlock(block)
 	parent := root.findNode(block.PrevHash)
@@ -810,77 +900,35 @@ func (bc *BlockChain) verifyBlock(block *Block) (isValidBlock bool) {
 		fmt.Println("Hint: Incorrect hash")
 		return false
 	}
+	println("111111111111111111111111111")
+	println(block.Transactions)
+	if block.Transactions == "" {
+		println("111234122222222222")
+		return true
+	}
 	// validate all the transactions
+	ledge := getLedge(parent)
 	transactions := convertJsonArray(block.Transactions)
-	requiredCoinBalanceMinerMap := make(map[string]int)
 	for i := 0; i < len(transactions); i++ {
-		json := transactions[i]
-		if !bc.validateTransactions(json["filename"], json["op"], json["content"]) {
-			return false
-		}
 		// add up coin balances
-		if _, ok := requiredCoinBalanceMinerMap[json["minerId"]]; !ok {
-			requiredCoinBalanceMinerMap[json["minerId"]] = 0
+		json := transactions[i]
+		if _, ok := ledge[json["minerId"]]; !ok {
+			return false
 		}
 		if json["op"] == "CreateFile" {
-			requiredCoinBalanceMinerMap[json["minerId"]] += config.NumCoinsPerFileCreate
+			if ledge[json["minerId"]] < config.NumCoinsPerFileCreate {
+				return false
+			}
+			ledge[json["minerId"]] -= config.NumCoinsPerFileCreate
 		}
 		if json["op"] == "AppendRec" {
-			requiredCoinBalanceMinerMap[json["minerId"]]++
-		}
-	}
-	for minerName, requiredCoins := range requiredCoinBalanceMinerMap {
-		minerBalance := bc.getCoinBalance(minerName)
-		if minerBalance < 0 || minerBalance < requiredCoins {
-			return false
+			if ledge[json["minerId"]] < 1 {
+				return false
+			}
+			ledge[json["minerId"]]--
 		}
 	}
 	return true
-}
-
-func (bc *BlockChain) getCoinBalance(minerID string) (balance int) {
-	longestMutex.Lock()
-	lastBlock := longestChainNodes[len(longestChainNodes)-1]
-	balance = 0
-	for {
-		if lastBlock.parent.hashvalue == root.hashvalue {
-			break
-		}
-		balance += bc.getMinerBlockBalance(lastBlock.block, minerID)
-		lastBlock = lastBlock.parent
-	}
-	longestMutex.Unlock()
-	return balance
-}
-
-func (bc *BlockChain) getMinerBlockBalance(block Block, minerID string) (minerBalance int) {
-	balance := 0
-	transactions := block.Transactions
-	jsons := convertJsonArray(transactions)
-	for i := 0; i < len(jsons); i++ {
-		json := jsons[i]
-		// if this is a no-op block mined by the miner return reward for no op block or 0
-		if json["op"] != "No-Op" {
-			if json["minerId"] == minerID {
-				return config.MinedCoinsPerNoOpBlock
-			} else {
-				return 0
-			}
-		}
-		if json["minerId"] == minerID {
-			if json["op"] == "CreateFile" {
-				balance -= config.NumCoinsPerFileCreate
-			}
-			if json["op"] == "AppendRec" {
-				balance-- // default price for append
-			}
-		}
-	}
-	// if this block was mined by the miner
-	if block.Miner == minerID {
-		balance += config.MinedCoinsPerOpBlock
-	}
-	return balance
 }
 
 func checkRecordInChain(record *OpMsg, node *BlockNode) bool {
@@ -904,7 +952,7 @@ func checkRecordInChain(record *OpMsg, node *BlockNode) bool {
 // when timeout, you just use API createBlock
 // the function will read records from the queue
 // and generate a new block
-func (bc *BlockChain) createTransactionBlock() {
+func createTransactionBlock() {
 	// set prev hash
 	block := &Block{}
 
@@ -925,6 +973,10 @@ func (bc *BlockChain) createTransactionBlock() {
 		if len(recordQueue) == 0 {
 			break //note
 		}
+		if checkBalance(*recordQueue[0]) == false {
+			break
+		} // no-op block
+
 		record := popRecordQueue()
 		if checkRecordInChain(record, lastblock) == true {
 			str := record.Op + "{,}" + record.Name + "{,}" + record.Content + "{,}" + record.MinerID + "{,}" + strconv.Itoa(int(record.MsgID))
@@ -938,7 +990,7 @@ func (bc *BlockChain) createTransactionBlock() {
 			}
 			transactionNum++
 		}
-		if transactionNum == bc.maxRecordNum {
+		if transactionNum == minerChain.maxRecordNum {
 			break
 		}
 	}
@@ -951,7 +1003,7 @@ func (bc *BlockChain) createTransactionBlock() {
 	}
 
 	// mine the block to find solution
-	block.Nonce = bc.proofOfWork(block)
+	block.Nonce = minerChain.proofOfWork(block)
 
 	println("*****************")
 	fmt.Printf("* Block Info\n")
@@ -1033,21 +1085,6 @@ func convertJsonArray(transaction string) []map[string]string {
 		res = append(res, json)
 	}
 	return res
-}
-
-// maps blockprevhash -> index of content in the block that have the filename
-func (bc *BlockChain) getFileNames() (fileNames []string) {
-	fileNames = make([]string, 0)
-	for _, block := range bc.chain {
-		jsons := convertJsonArray(block.Transactions)
-		for i := 0; i < len(jsons); i++ {
-			json := jsons[i]
-			if json["op"] == "CreateFile" {
-				fileNames = append(fileNames, json["filename"])
-			}
-		}
-	}
-	return fileNames
 }
 
 func (bc *BlockChain) validateTransactions(fileName string, opType string, content string) (valid bool) {
@@ -1137,7 +1174,8 @@ func main() {
 
 	go listenMiner()  // Open a port to listen msg from miners
 	go listenClient() // Open a port to listen msg from clients
-	// go minerChain.printChain()
+	go startBlockGeneration()
+	// disableNoOp = true
 
 	// command line control
 	reader := bufio.NewReader(os.Stdin)
@@ -1154,30 +1192,17 @@ func main() {
 			printRecordQueue()
 		} else if strings.Contains(text, "bqueue") == true {
 			printBlockQueue()
-		} else if strings.Contains(text, "lfiles") == true {
-			fileNames := minerChain.getFileNames()
-			for _, name := range fileNames {
-				fmt.Println(name)
-			}
 		} else if strings.Contains(text, "pop") == true {
 			rec := popRecordQueue()
 			if rec == nil {
 				println("The queue is empty")
 			}
-		} else if strings.Contains(text, "getBalances") == true {
-			b := Block{root.hashvalue, 0, 0, 65535, "Miner", ""}
-			b.Transactions = "No-Op" + "{,}" + "" + "{,}" + "" + "{,}" + config.MinerID + "{,}" + ""
-			fmt.Println("Mijnwerker Balance : ")
-			fmt.Println(minerChain.getCoinBalance("Mijnwerker"))
-			fmt.Println("Miner2 Balance : ")
-			fmt.Println(minerChain.getCoinBalance("Miner2"))
-			fmt.Println("Miner3 Balance : ")
-			fmt.Println(minerChain.getCoinBalance("Miner3"))
-
 		} else if strings.Contains(text, "floodblock") == true {
 			broadcastBlocks(&Block{"Hello", 0, 0, 65535, "Miner", "A,B,C,D"})
 		} else if strings.Contains(text, "createblock") == true {
-			minerChain.createTransactionBlock()
+			createTransactionBlock()
+		} else if strings.Contains(text, "ledge") == true {
+			printLedge()
 		} else if strings.Contains(text, "chain") == true {
 			minerChain.printChain()
 		} else if strings.Contains(text, "test") == true {
@@ -1200,11 +1225,9 @@ func main() {
 		} else if strings.Contains(text, "tree") == true {
 			root.printTree()
 		} else if strings.Contains(text, "noop") == true {
-			if disableNoOp == false {
-				disableNoOp = true
-			} else {
-				disableNoOp = false
-			}
+			disableNoOp = false
+			createTransactionBlock()
+			disableNoOp = true
 		}
 	}
 }
