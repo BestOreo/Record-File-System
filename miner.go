@@ -102,6 +102,7 @@ func checkfile(fname string) bool {
 	longestMutex.Lock()
 	lastblock := longestChainNodes[rand.Int()%len(longestChainNodes)]
 	longestMutex.Unlock()
+
 	for {
 		if lastblock == nil {
 			return false
@@ -119,6 +120,14 @@ func getAllRecordByName(fname string) []string {
 	lastblock := longestChainNodes[rand.Int()%len(longestChainNodes)]
 	longestMutex.Unlock()
 	res := make([]string, 0)
+
+	for i := 0; i < config.ConfirmsPerFileAppend; i++ {
+		if lastblock == nil {
+			return res
+		}
+		lastblock = lastblock.parent
+	}
+
 	for {
 		if lastblock == nil {
 			return res
@@ -529,8 +538,9 @@ func listenClient() {
 						fmt.Println(msgjson)
 						fmt.Println("-----------------")
 						// codes about blockchain
-						conn.Write([]byte("success"))
+						// conn.Write([]byte("success"))
 						operationMsg := generateOpMsg(msgjson["op"], msgjson["name"], msgjson["content"])
+						conn.Write([]byte(strconv.Itoa(int(operationMsg.MsgID)) + ";" + strconv.Itoa(config.GenOpBlockTimeout) + ";" + config.MinerID))
 						pushRecordQueue(&operationMsg)
 						broadcastOperations(operationMsg)
 					}
@@ -566,23 +576,51 @@ func listenClient() {
 				} else if msgjson["op"] == "AppendRec" {
 					if checkfile(msgjson["name"]) == false {
 						conn.Write([]byte("FileDoesNotExistError"))
-					} else if len(msgjson["content"])/512 > 655354 { // have at most 65,5354 (uint16) records
+						continue
+					}
+					records := getAllRecordByName(msgjson["name"])
+					if len(records) >= 65535 { // have at most 65,5354 (uint16) records
 						conn.Write([]byte("FileMaxLenReachedError"))
 					} else {
-						var m [512]byte
-						copy(m[:], []byte(msgjson["content"]))
-						blockFile[msgjson["name"]] += string(m[:])
-
 						// codes about blockchain
-
-						conn.Write([]byte(strconv.Itoa(len(blockFile[msgjson["name"]])/512 - 1)))
 						operationMsg := generateOpMsg(msgjson["op"], msgjson["name"], msgjson["content"])
+						// retrun msgID,time interval, ConfirmsPerFileAppend, current length
+						longestMutex.Lock()
+						conn.Write([]byte(strconv.Itoa(int(operationMsg.MsgID)) + ";" + strconv.Itoa(config.GenOpBlockTimeout) + ";" + config.MinerID))
+						longestMutex.Unlock()
 						pushRecordQueue(&operationMsg)
 						broadcastOperations(operationMsg)
 					}
+				} else if msgjson["op"] == "queryFile" {
+					tranction := msgjson["name"]
+					minerID := msgjson["content"]
+					reply := queryFilePos(tranction, minerID)
+					conn.Write([]byte(reply))
 				}
 			}
 		}()
+	}
+}
+
+func queryFilePos(transaction string, minerID string) string {
+	longestMutex.Lock()
+	lastblock := longestChainNodes[rand.Int()%len(longestChainNodes)] // pick the longest chain randomly
+	curLength := maxLength
+	longestMutex.Unlock()
+
+	for {
+		if lastblock == nil {
+			return "wait"
+		}
+		if strings.Contains(lastblock.block.Transactions, transaction) == true {
+			if strings.Contains(lastblock.block.Transactions, minerID) == false {
+				return "false"
+			}
+			if curLength-lastblock.block.Index >= config.ConfirmsPerFileCreate {
+				return "true"
+			}
+		}
+		lastblock = lastblock.parent
 	}
 }
 
@@ -708,13 +746,8 @@ func (bc *BlockChain) init() {
 func (bc *BlockChain) startBlockGeneration() {
 	ticker := time.NewTicker(10 * time.Second)
 	go func() {
-		for _ = range ticker.C {
-			// fmt.Println(t)
-			if len(recordQueue) == 0 {
-				bc.createNoOpBlock()
-			} else {
-				bc.createTransactionBlock()
-			}
+		for range ticker.C {
+			bc.createTransactionBlock()
 		}
 	}()
 }
@@ -734,46 +767,20 @@ func (bc *BlockChain) manageChain() {
 func (bc *BlockChain) verifyBlock(block *Block) (isValidBlock bool) {
 	numberOfZeros := strings.Repeat("0", bc.difficulty)
 	blockHash := bc.hashBlock(block)
-	longestMutex.Lock()
-	for i := 0; i < len(longestChainNodes); i++ {
-		lastBlock := longestChainNodes[i]
-		lastBlockHash := bc.hashBlock(&lastBlock.block)
-		// should point to last block hash
-		hasCorrectPrevHash := block.PrevHash == lastBlockHash
-		if !hasCorrectPrevHash {
-			fmt.Println("Block.PrevHash:", block.PrevHash)
-			fmt.Println("Real PrevHash", lastBlockHash)
-			fmt.Println("Hint: Incorrect prev hash")
-		}
-		// hashing should produce correct number of zeros
-		hasCorrectHash := strings.HasSuffix(blockHash, numberOfZeros)
-		if !hasCorrectHash {
-			fmt.Println("BlockHash:\t", blockHash)
-			fmt.Println("BlockNonce:\t", block.Nonce)
-			fmt.Println("Hint: Incorrect hash")
-		}
-		// validate all the transactions
-		transactions := convertJsonArray(block.Transactions)
-		hasvalidTransactions := true
-		for i := 0; i < len(transactions); i++ {
-			json := transactions[i]
-			if !bc.validateTransactions(json["filename"], json["op"], json["content"]) {
-				hasvalidTransactions = false
-			}
-			if !bc.validateCoinBalance(json["minerId"]) {
-				hasvalidTransactions = false
-			}
-		}
-		// validate coin balance
-
-		isValidBlock = hasCorrectHash && hasCorrectPrevHash && hasvalidTransactions
-		if isValidBlock == true {
-			break
-		}
+	parent := root.findNode(block.PrevHash)
+	if parent == nil {
+		return false
 	}
-	longestMutex.Unlock()
-	return isValidBlock
+	hasCorrectHash := strings.HasSuffix(blockHash, numberOfZeros)
+	if !hasCorrectHash {
+		fmt.Println("BlockHash:\t", blockHash)
+		fmt.Println("BlockNonce:\t", block.Nonce)
+		fmt.Println("Hint: Incorrect hash")
+		return false
+	}
+	return true
 }
+
 func (bc *BlockChain) validateCoinBalance(minerID string) (valid bool) {
 	return true
 }
@@ -840,38 +847,11 @@ func (bc *BlockChain) createTransactionBlock() {
 
 	// it's not right, just for convenience
 	if transactionNum == 0 {
-		return
+		if disableNoOp == true {
+			return
+		}
 	}
 
-	// mine the block to find solution
-	block.Nonce = bc.proofOfWork(block)
-
-	println("*****************")
-	fmt.Printf("* Block Info\n")
-	println("*Index:", block.Index)
-	println("*Miner:", block.Miner)
-	println("*Transaction:", block.Transactions)
-	println("*Nonce:", block.Nonce)
-	println("*****************")
-
-	broadcastBlocks(block)
-}
-
-func (bc *BlockChain) createNoOpBlock() {
-	// set prev hash
-	block := &Block{}
-
-	longestMutex.Lock()
-	lastblock := longestChainNodes[rand.Int()%len(longestChainNodes)] // pick the longest chain randomly
-	block.Index = lastblock.block.Index + 1
-	longestMutex.Unlock()
-
-	block.PrevHash = lastblock.hashvalue
-
-	// block.Transactions = bc.txBuffer
-	block.Timestamp = makeTimestamp()
-	block.Miner = config.MinerID
-	block.Transactions = "No-Op" + "{,}" + "" + "{,}" + "" + "{,}" + config.MinerID + "{,}" + ""
 	// mine the block to find solution
 	block.Nonce = bc.proofOfWork(block)
 
@@ -945,10 +925,12 @@ func convertJsonArray(transaction string) []map[string]string {
 			json["filename"] = ""
 			json["content"] = ""
 			json["minerId"] = elements[3]
+			json["msgid"] = elements[4]
 		} else {
 			json["filename"] = elements[1]
 			json["content"] = elements[2]
 			json["minerId"] = elements[3]
+			json["msgid"] = elements[4]
 		}
 		res = append(res, json)
 	}
@@ -1032,7 +1014,7 @@ func Initial() {
 		chainLock:    &sync.Mutex{},
 		chain:        make([]*Block, 0),
 		maxRecordNum: 2, // the maximum records in one block
-		difficulty:   config.PowPerOpBlock,
+		difficulty:   5,
 	}
 	minerChain.init()
 
@@ -1041,7 +1023,12 @@ func Initial() {
 
 /*** END Blockchain ***/
 
+var disableNoOp bool
+
 func main() {
+
+	disableNoOp = true
+
 	if len(os.Args) != 2 {
 		println("go run miner.go [settings]")
 		return
@@ -1104,6 +1091,12 @@ func main() {
 			root.printTree()
 		} else if strings.Contains(text, "tree") == true {
 			root.printTree()
+		} else if strings.Contains(text, "noop") == true {
+			if disableNoOp == false {
+				disableNoOp = true
+			} else {
+				disableNoOp = false
+			}
 		}
 	}
 }

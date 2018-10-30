@@ -10,7 +10,7 @@ import (
 type Record [512]byte
 
 func main() {
-	rfs, _ := rfslib.Initialize("127.0.0.1:8000", "127.0.0.1:9090")
+	rfs, _ := rfslib.Initialize("127.0.0.1:8000", "127.0.0.1:6060")
 
 	err := rfs.CreateFile("text.txt")
 

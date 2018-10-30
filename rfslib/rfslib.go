@@ -15,6 +15,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // A Record is the unit of file access (reading/appending) in RFS.
@@ -168,9 +169,33 @@ func (f RFSInstance) CreateFile(fname string) (err error) {
 		return BadFilenameError(fname)
 	}
 	reply, err := sendTCP(f.minerAddr, json("CreateFile", fname, "nil"))
+	if err != nil {
+		return err
+	}
 	if reply == "FileExistsError" {
 		return FileExistsError(fname)
 	}
+	replylist := strings.Split(reply, ";")
+	timeInterval, _ := strconv.Atoi(replylist[1])
+	minerID := replylist[2]
+
+	ticker := time.NewTicker(time.Duration(timeInterval) * time.Second)
+	for range ticker.C {
+		// to check whether the file has been comfirmed
+		ack, err := sendTCP(f.minerAddr, json("queryFile", "CreateFile{,}"+fname, minerID))
+		if err != nil {
+			return err
+		}
+		if ack == "wait" {
+			println("conforming...")
+		} else if ack == "true" {
+			return nil
+		} else {
+			return FileExistsError(fname)
+		}
+		// perform any
+	}
+
 	return err
 }
 
