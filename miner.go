@@ -972,7 +972,13 @@ func checkBalance(operationMsg OpMsg) bool {
 
 // This function should only occur when the chain is locked.
 func (bc *BlockChain) verifyBlock(block *Block) (isValidBlock bool) {
-	numberOfZeros := strings.Repeat("0", bc.difficulty)
+	var difficulty int
+	if block.Transactions == "" {
+		difficulty = config.PowPerNoOpBlock
+	} else {
+		difficulty = config.PowPerOpBlock
+	}
+	numberOfZeros := strings.Repeat("0", difficulty)
 	blockHash := bc.hashBlock(block)
 	parent := root.findNode(block.PrevHash)
 	if parent == nil {
@@ -1104,7 +1110,13 @@ func (bc *BlockChain) proofOfWork(block *Block) (Nonce uint32) {
 	Nonce = block.Nonce
 	str := bc.hashBlock(block)
 	for {
-		numberOfZeros := strings.Repeat("0", bc.difficulty)
+		var difficulty int
+		if block.Transactions == "" {
+			difficulty = config.PowPerNoOpBlock
+		} else {
+			difficulty = config.PowPerOpBlock
+		}
+		numberOfZeros := strings.Repeat("0", difficulty)
 		foundSolution := strings.HasSuffix(str, numberOfZeros)
 		if foundSolution {
 			break
