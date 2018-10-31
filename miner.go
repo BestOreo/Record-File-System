@@ -63,6 +63,9 @@ var blockQueue []*Block
 var blockQueueMutex sync.Mutex
 
 var minerChain *BlockChain
+var hasSynchronize bool
+var synTempQueue []*Block
+var synQueueMutex sync.Mutex
 
 // type filenode struct {
 // 	count   int
@@ -400,6 +403,12 @@ func (t *MinerHandle) FloodOperation(record *OpMsg, reply *int) error {
 
 // FloodBlock : flood block to the whole network
 func (t *MinerHandle) FloodBlock(block *Block, reply *int) error {
+	if hasSynchronize == false {
+		synQueueMutex.Lock()
+		synTempQueue = append(synTempQueue, block)
+		synQueueMutex.Unlock()
+		return nil
+	}
 	*reply = 0
 	println(getTime())
 	printColorFont("purple", "*** Receive Block")
@@ -442,12 +451,67 @@ func (t *MinerHandle) FloodBlock(block *Block, reply *int) error {
 	return nil
 }
 
+func tranverseTree(targetIp string, node *BlockNode) {
+	sendTreeNode(targetIp, node.block)
+	for _, child := range node.blockChildren {
+		tranverseTree(targetIp, child)
+	}
+}
+
+func (t *MinerHandle) AskForTree(targetIp string, reply *bool) error {
+	for {
+		for _, child := range root.blockChildren {
+			tranverseTree(targetIp, child)
+		}
+		*reply = true
+		return nil
+	}
+	return nil
+}
+
+func (t *MinerHandle) ReceiveTree(block Block, reply *bool) error {
+	if checkBlockInQueue(&block) == false {
+		println("---------------")
+		println("| Index:", block.Index)
+		println("| Miner:", block.Miner)
+		println("| Nonce:", block.Nonce)
+		println("| PrevHash:", block.PrevHash)
+		println("| Transactions:", block.Transactions)
+		println("| Timestamp:", block.Timestamp)
+		println("---------------")
+		println()
+		pushBlockQueue(&block)
+		root.addChild(block)
+	}
+	*reply = true
+	return nil
+}
+
+func sendTreeNode(ip string, block Block) error {
+	client, err := rpc.DialHTTP("tcp", ip)
+	if err != nil {
+		println("1 Send block dialing:", err)
+		return err
+	}
+	defer client.Close()
+	var reply bool
+	err = client.Call("MinerHandle.ReceiveTree", block, &reply)
+	if err != nil {
+		println("2 Send block dialing:", err)
+		return err
+	}
+	if reply == true {
+		return nil
+	}
+	return err
+}
+
 /******************************************/
 
 // broadcast opearation of client to whole network
 func broadcastOperations(operationMsg OpMsg) {
 	if checkBalance(operationMsg) == false {
-		ticker := time.NewTicker(time.Duration(1) * time.Second)
+		ticker := time.NewTicker(time.Duration(config.GenOpBlockTimeout) * time.Millisecond)
 		for range ticker.C {
 			if checkBalance(operationMsg) == true {
 				break
@@ -499,6 +563,39 @@ func broadcastBlocks(block *Block) {
 	}
 	fmt.Println("---------End BROADCAST--------")
 	println()
+}
+
+func synchronization() {
+	println("******** Synchronization Receive block ***********")
+	ticker := time.NewTicker(time.Duration(config.GenOpBlockTimeout) * time.Second)
+	for range ticker.C {
+		for _, ip := range config.PeerMinersAddrs {
+			client, err := rpc.DialHTTP("tcp", ip)
+			if err != nil {
+				// println("synchronization dialing error:", err)
+				continue
+			}
+			defer client.Close()
+			var reply bool
+			err = client.Call("MinerHandle.AskForTree", config.IncomingMinersAddr, &reply)
+			if err != nil {
+				println("synchronization tcp error:", err)
+				continue
+			}
+
+			if reply == true {
+				hasSynchronize = true
+				for _, block := range synTempQueue {
+					if checkBlockInQueue(block) == true {
+						pushBlockQueue(block)
+						root.addChild(*block)
+					}
+				}
+				println("******** End Synchronization Receive block *******")
+				return
+			}
+		}
+	}
 }
 
 // thread to deal with incoming message from client
@@ -640,7 +737,7 @@ func queryFilePos(transaction string, minerID string) string {
 func queryRecord(record OpMsg) {
 
 	transaction := record.Op + "{,}" + record.Name + "{,}" + record.Content + "{,}" + record.MinerID + "{,}" + strconv.Itoa(int(record.MsgID))
-	ticker := time.NewTicker(time.Duration(1) * time.Second)
+	ticker := time.NewTicker(time.Duration(config.GenOpBlockTimeout) * time.Second)
 	for range ticker.C {
 		longestMutex.Lock()
 		lastblock := longestChainNodes[rand.Int()%len(longestChainNodes)] // pick the longest chain randomly
@@ -652,8 +749,8 @@ func queryRecord(record OpMsg) {
 			if lastblock == nil {
 				break
 			}
-			// println(lastblock.block.Transactions)
-			// println(transaction)
+			// println("block:", lastblock.block.Transactions)
+			// println("query", transaction)
 			// println()
 			if lastblock.block.Transactions == transaction {
 				if curLength-lastblock.block.Index >= config.ConfirmsPerFileAppend {
@@ -785,21 +882,10 @@ func (bc *BlockChain) init() {
 }
 
 func startBlockGeneration() {
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(time.Duration(config.GenOpBlockTimeout) * time.Second)
 	for range ticker.C {
 		createTransactionBlock()
 	}
-}
-
-func (bc *BlockChain) manageChain() {
-	ticker := time.NewTicker(30 * time.Second)
-	go func() {
-		for t := range ticker.C {
-			fmt.Println(t)
-			bc.difficulty = len(bc.chain) / 2
-			// perform any
-		}
-	}()
 }
 
 func printLedge() {
@@ -886,7 +972,6 @@ func checkBalance(operationMsg OpMsg) bool {
 
 // This function should only occur when the chain is locked.
 func (bc *BlockChain) verifyBlock(block *Block) (isValidBlock bool) {
-	println("fsadfasdfsadfsdafasdfsdafsda")
 	numberOfZeros := strings.Repeat("0", bc.difficulty)
 	blockHash := bc.hashBlock(block)
 	parent := root.findNode(block.PrevHash)
@@ -900,10 +985,8 @@ func (bc *BlockChain) verifyBlock(block *Block) (isValidBlock bool) {
 		fmt.Println("Hint: Incorrect hash")
 		return false
 	}
-	println("111111111111111111111111111")
 	println(block.Transactions)
 	if block.Transactions == "" {
-		println("111234122222222222")
 		return true
 	}
 	// validate all the transactions
@@ -1169,13 +1252,16 @@ func main() {
 		return
 	}
 	readConfig(os.Args[1]) // read the config.json into var config configSetting
+
 	fmt.Printf("MinerID:%s\nclientPort:%s\nPeerMinersAddrs:%v\nIncomingMinersAddr:%s\n", config.MinerID, config.IncomingClientsAddr, config.PeerMinersAddrs, config.IncomingMinersAddr)
 	Initial()
 
-	go listenMiner()  // Open a port to listen msg from miners
+	go listenMiner() // Open a port to listen msg from miners
+	synchronization()
 	go listenClient() // Open a port to listen msg from clients
 	go startBlockGeneration()
 	// disableNoOp = true
+	// go synchronization()
 
 	// command line control
 	reader := bufio.NewReader(os.Stdin)
