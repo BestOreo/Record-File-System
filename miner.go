@@ -812,19 +812,43 @@ func (parent *BlockNode) findNode(prehash string) *BlockNode {
 
 func printTreeNode(node BlockNode, suffix string) {
 	//transactions := convertJsonArray(node.block.Transactions)
-	fmt.Println(node.block.Transactions)
-	println(suffix+"Index:", node.block.Index)
-	println(suffix+"Hashvalue:", node.hashvalue)
-	println(suffix+"PrevHash:", node.block.PrevHash)
-	println(suffix+"Timestamp:", node.block.Timestamp)
-	println(suffix+"Miner:", node.block.Miner)
-	println(suffix+"Transactions:", node.block.Transactions)
-	println(suffix+"Nonce:", node.block.Nonce)
+	if node.block.Transactions == "" {
+			fmt.Println(suffix+"---------")
+			println(suffix+"Index:", node.block.Index)
+			println(suffix+"Miner:", node.block.Miner)
+			println(suffix+"PrevHash:", node.block.PrevHash)
+			println(suffix+"Transaction: No-op")
+			fmt.Println(suffix+"---------")
+	} else {
+		fmt.Println(suffix+"==================================== TRANSACTION BLOCK ====================================")
+		println(suffix+"Index:", node.block.Index)
+		println(suffix+"Hashvalue:", node.hashvalue)
+		println(suffix+"PrevHash:", node.block.PrevHash)
+		println(suffix+"Timestamp:", node.block.Timestamp)
+		println(suffix+"Miner:", node.block.Miner)
+		println(suffix+"Nonce:", node.block.Nonce)
+		jsons := convertJsonArray(node.block.Transactions)
+		println(suffix+"_____________TRANSACTIONS_____________")
+		for i := 0; i < len(jsons); i++ {
+			json := jsons[i]
+			println(suffix+"#{")
+			println(suffix+json["filename"])
+			println(suffix+json["content"])
+			println(suffix+json["op"])
+			println(suffix+"}#")
+		}
+		println(suffix+"END TRANSACTIONS")
+		fmt.Println(suffix+"============================================================================================")
+	}
 	println(suffix + "Children:")
 	for i := 0; i < len(node.blockChildren); i++ {
 		child := node.blockChildren[i]
+		createIndent := ""
+		if(i > 0){
+			createIndent = "\t"
+		}
 		println(suffix + "\t" + strconv.Itoa(i))
-		printTreeNode(*child, suffix+"\t")
+		printTreeNode(*child, suffix + createIndent)
 		println()
 	}
 }
