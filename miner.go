@@ -209,17 +209,6 @@ var OpHashMap []string
 
 /*******************************************/
 // Queue Opearation
-// func pushRecordQueue(opmsg *OpMsg) {
-// 	recordQueueMutex.Lock()
-// 	hashOp := hashOpMsg(opmsg)
-// 	if checkOpHashMap(hashOp, OpHashMap) {
-// 		fmt.Println("Has transaction")
-// 	} else {
-// 		recordQueue = append(recordQueue, opmsg)
-// 		OpHashMap = append(OpHashMap, hashOp)
-// 	}
-// 	recordQueueMutex.Unlock()
-// }
 
 func pushRecordQueue(opmsg *OpMsg) {
 	for _, q := range recordQueue {
@@ -391,7 +380,7 @@ func (t *MinerHandle) FloodOperation(record *OpMsg, reply *int) error {
 	*reply = 0
 	if checkOperationInQueue(record) == false {
 		println("------------")
-		println("| Record: ", record.MinerID, record.MsgID, record.Op, record.Name, record.Content)
+		println("| Got a Record: ", record.MinerID, record.MsgID, record.Op, record.Name, record.Content)
 		printColorFont("green", "| pushed into recordQueue")
 		println("------------")
 		pushRecordQueue(record)
@@ -410,30 +399,31 @@ func (t *MinerHandle) FloodBlock(block *Block, reply *int) error {
 		return nil
 	}
 	*reply = 0
-	println(getTime())
-	printColorFont("purple", "*** Receive Block")
+	// println(getTime())
+	// printColorFont("purple", "*** Receive Block")
+	// println(block.Index)
 
 	if checkBlockInQueue(block) == false {
 		if minerChain.verifyBlock(block) == false {
 			return nil
 		}
-		println("------------")
-		println("Repeated: False")
+		println("------------ Verified & Added Block -------")
+		// println("Repeated: False")
 		println("pre-Hash:", block.PrevHash)
 		println("index:", block.Index)
 		println("MinerID:", block.Miner)
-		// println("tx", block.Transactions)
-		println("Transactions:")
-		if block.Transactions != "" {
-			jsons := convertJsonArray(block.Transactions)
-			for i := 0; i < len(jsons); i++ {
-				json := jsons[i]
-				fmt.Printf("%d\top:%s\tfilename:%s\tcontent:%s\n", i, json["op"], json["filename"], json["content"])
-			}
-		}
-		println("timestamp:", block.Timestamp)
+		// // println("tx", block.Transactions)
+		// println("Transactions:")
+		// if block.Transactions != "" {
+		// 	jsons := convertJsonArray(block.Transactions)
+		// 	for i := 0; i < len(jsons); i++ {
+		// 		json := jsons[i]
+		// 		fmt.Printf("%d\top:%s\tfilename:%s\tcontent:%s\n", i, json["op"], json["filename"], json["content"])
+		// 	}
+		// }
+		// println("timestamp:", block.Timestamp)
 		println("------------")
-		println()
+		// println()
 		pushBlockQueue(block)
 
 		// minerChain.addBlockToChain(block) //old way
@@ -442,12 +432,7 @@ func (t *MinerHandle) FloodBlock(block *Block, reply *int) error {
 
 		broadcastBlocks(block)
 
-	} else {
-		println("Repeated: True")
-		println("From", block.Miner)
-		printColorFont("purple", "***")
 	}
-	println()
 	return nil
 }
 
@@ -521,7 +506,7 @@ func broadcastOperations(operationMsg OpMsg) {
 	for _, ip := range config.PeerMinersAddrs {
 		client, err := rpc.DialHTTP("tcp", ip)
 		if err != nil {
-			println("dialing:", err)
+			// println("dialing:", err)
 			continue
 		}
 		defer client.Close()
@@ -531,23 +516,23 @@ func broadcastOperations(operationMsg OpMsg) {
 			println("tcp error:", err)
 			continue
 		}
-		if reply == 0 {
-			fmt.Printf("!!! send %v to %s successfully\n", operationMsg, ip)
-		}
+		// if reply == 0 {
+		// 	fmt.Printf("!!! send %v to %s successfully\n", operationMsg, ip)
+		// }
 	}
 }
 
 // broadcastBlocks broadcast blcok to whole network
 func broadcastBlocks(block *Block) {
-	println(getTime())
-	fmt.Println("---------BROADCAST--------")
-	println("Index:", block.Index)
-	println("Transactions:", block.Transactions)
-	println("Timestamp:", block.Timestamp)
+	// println(getTime())
+	// fmt.Println("---------BROADCAST BLOCK--------")
+	// println("Block Index:", block.Index)
+	// println("Transactions:", block.Transactions)
+	// println("Timestamp:", block.Timestamp)
 	for _, ip := range config.PeerMinersAddrs {
 		client, err := rpc.DialHTTP("tcp", ip)
 		if err != nil {
-			println("dialing:", err)
+			//println("dialing:", err)
 			continue
 		}
 		defer client.Close()
@@ -557,29 +542,34 @@ func broadcastBlocks(block *Block) {
 			println("tcp error:", err)
 			continue
 		}
-		if reply == 0 {
-			fmt.Printf("send block to %s successfully\n", ip)
-		}
+		// if reply == 0 {
+		// 	fmt.Printf("send block to %s successfully\n", ip)
+		// }
 	}
-	fmt.Println("---------End BROADCAST--------")
+	// fmt.Println("---------End BROADCAST--------")
 	println()
 }
 
 func synchronization() {
 	println("******** Synchronization Receive block ***********")
 	ticker := time.NewTicker(time.Duration(config.GenOpBlockTimeout) * time.Second)
+	num_disconnected := 0
 	for range ticker.C {
 		for _, ip := range config.PeerMinersAddrs {
 			client, err := rpc.DialHTTP("tcp", ip)
 			if err != nil {
-				// println("synchronization dialing error:", err)
+				println("synchronization dialing error1:", err)
+				num_disconnected++
+				if (num_disconnected > len(config.PeerMinersAddrs) - 1) {
+					return
+				}
 				continue
 			}
 			defer client.Close()
 			var reply bool
 			err = client.Call("MinerHandle.AskForTree", config.IncomingMinersAddr, &reply)
 			if err != nil {
-				println("synchronization tcp error:", err)
+				println("synchronization client call AskForTree error:", err)
 				continue
 			}
 
@@ -779,12 +769,12 @@ var longestChainNodes []*BlockNode // to record the tail node address of longest
 var tailNodes []*BlockNode
 
 func (root *BlockNode) addChild(node Block) {
-	println("-------- addChild ---------")
+	// println("-------- addChild ---------")
 	parent := root.findNode(node.PrevHash)
 	if parent == nil {
 		printColorFont("red", "No such node has prevHash: "+node.PrevHash)
 	} else {
-		println("Add into tree successfully")
+		// println("Add into tree successfully")
 		child := &BlockNode{node, minerChain.hashBlock(&node), nil, parent}
 		parent.blockChildren = append(parent.blockChildren, child)
 
@@ -803,7 +793,7 @@ func (root *BlockNode) addChild(node Block) {
 		}
 
 	}
-	println("-------- End addChild ---------\n")
+	// println("-------- End addChild ---------\n")
 
 }
 
@@ -821,6 +811,8 @@ func (parent *BlockNode) findNode(prehash string) *BlockNode {
 }
 
 func printTreeNode(node BlockNode, suffix string) {
+	//transactions := convertJsonArray(node.block.Transactions)
+	fmt.Println(node.block.Transactions)
 	println(suffix+"Index:", node.block.Index)
 	println(suffix+"Hashvalue:", node.hashvalue)
 	println(suffix+"PrevHash:", node.block.PrevHash)
@@ -1094,19 +1086,23 @@ func createTransactionBlock() {
 	// mine the block to find solution
 	block.Nonce = minerChain.proofOfWork(block)
 
-	println("*****************")
-	fmt.Printf("* Block Info\n")
-	println("*Index:", block.Index)
-	println("*Miner:", block.Miner)
-	println("*Transaction:", block.Transactions)
-	println("*Nonce:", block.Nonce)
-	println("*****************")
+	// println("***************** Found Solution for block: ")
+	// // fmt.Printf("* Block Info\n")
+	// println("*Index:", block.Index)
+	// // println("*Miner:", block.Miner)
+	// // println("*Transaction:", block.Transactions)
+	// println("*Nonce:", block.Nonce)
+	// println("***************** end solution.")
 
+	// add to own chain first before broadcasting.
+	pushBlockQueue(block)
+
+	root.addChild(*block)
 	broadcastBlocks(block)
 }
 
 func (bc *BlockChain) proofOfWork(block *Block) (Nonce uint32) {
-	println("-----------ProofOfWork-----------")
+// println("Working on block...")
 	Nonce = block.Nonce
 	str := bc.hashBlock(block)
 	for {
@@ -1125,11 +1121,11 @@ func (bc *BlockChain) proofOfWork(block *Block) (Nonce uint32) {
 		block.Nonce = Nonce
 		str = bc.hashBlock(block)
 	}
-	fmt.Println("Found Solution: (prevhash/currhash/nonce) ")
-	fmt.Println("PrevHash", block.PrevHash)
-	fmt.Println("currhash", str)
-	fmt.Println("Nonce:", Nonce)
-	println("-----------End ProofOfWork-----------")
+	// fmt.Println("Found Solution: (prevhash/currhash/nonce) ")
+	// fmt.Println("PrevHash", block.PrevHash)
+	// fmt.Println("currhash", str)
+	// fmt.Println("Nonce:", Nonce)
+	// println("-----------End ProofOfWork-----------")
 	println()
 	return Nonce
 }
@@ -1193,46 +1189,6 @@ func (bc *BlockChain) validateTransactions(fileName string, opType string, conte
 		}
 	}
 	return true
-}
-
-// func (bc *BlockChain) findFiles(fileName string) {
-// 	blockTxMap := make(map[string][]int)
-// 	for _, block := range bc.chain {
-// 		for txID, tx := range block.Transactions {
-// 			hasBlock := false
-// 			if tx.filename == fileName {
-// 				if !hasBlock {
-// 					blockTxMap[block.PrevHash] = make([]int, 0)
-// 					hasBlock = true
-// 				}
-// 				blockTxMap[block.PrevHash] = append(blockTxMap[block.PrevHash], txID)
-// 				fmt.Println(block.PrevHash)
-// 				fmt.Println(tx.filename)
-// 			}
-// 		}
-// 	}
-// 	fmt.Println("map:", blockTxMap)
-// }
-
-func (bc *BlockChain) printChain() {
-	for i, block := range bc.chain {
-		fmt.Println("****************************")
-		fmt.Println("Block Index: ", block.Index)
-		fmt.Println("Prev Hash: ", block.PrevHash)
-		println("Transactions:")
-		if i != 0 && block.Transactions != "" {
-			jsons := convertJsonArray(block.Transactions)
-			for i := 0; i < len(jsons); i++ {
-				json := jsons[i]
-				fmt.Printf("%d\top:%s\tfilename:%s\tcontent:%s\n", i, json["op"], json["filename"], json["content"])
-			}
-		}
-		fmt.Println("Nonce: ", block.Nonce)
-		fmt.Println("MinerID: ", block.Miner)
-		fmt.Println("Timestamp: ", block.Timestamp)
-		fmt.Println("****************************")
-		println()
-	}
 }
 
 func Initial() {
@@ -1301,8 +1257,6 @@ func main() {
 			createTransactionBlock()
 		} else if strings.Contains(text, "ledge") == true {
 			printLedge()
-		} else if strings.Contains(text, "chain") == true {
-			minerChain.printChain()
 		} else if strings.Contains(text, "test") == true {
 			s := convertJsonArray("CreateFile{,}text.txt{,}{,}Mijnwerker{;}CreateFile{,}text2.txt{,}{,}Mijnwerker")
 			for _, v := range s {
