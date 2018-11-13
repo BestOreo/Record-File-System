@@ -172,6 +172,10 @@ func (f RFSInstance) CreateFile(fname string) (err error) {
 	if err != nil {
 		return err
 	}
+	if reply == "AllDisconnectedPeers" {
+		fmt.Println(reply)
+		return DisconnectedError("miner does not have peers")
+	}
 	if reply == "FileExistsError" {
 		return FileExistsError(fname)
 	}
@@ -266,6 +270,9 @@ func (f RFSInstance) AppendRec(fname string, record *Record) (recordNum uint16, 
 	reply, err := sendTCP(f.minerAddr, json("AppendRec", fname, string(content)))
 	if err != nil {
 		return 0, err
+	}
+	if reply == "AllDisconnectedPeers" {
+		return 0,DisconnectedError("miner does not have peers")
 	}
 	if reply == "FileDoesNotExistError" {
 		return 0, FileDoesNotExistError(fname)

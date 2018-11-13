@@ -39,6 +39,7 @@ func main() {
 
 	err = rfs.CreateFile(fname)
 	if err != nil {
+		log.Fatal(err)
 		log.Fatal("Failed to create file: ", fname)
 	}
 	fmt.Println("Successfully created file:", fname)
